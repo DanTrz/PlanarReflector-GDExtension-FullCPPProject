@@ -1,0 +1,30 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?link...
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "lldb",
+            "request": "launch",
+            "preLaunchTask": "buildCPP",
+            "name": "Build/Run with LLDB",
+            "program": "C:\\Local Documents\\Development\\Godot\\Godot Versions\\Godot_v4.4.1-stable_mono_win64\\Godot_v4.4.1-stable_mono_win64.exe",
+            "args": ["--path", "C:\\Local Documents\\Development\\Godot\\Godot Projects\\PlanarReflector GDExtension\\PlanarReflector-CPP"],
+            "cwd": "${workspaceFolder}"
+        }, 
+
+               {
+            // --- THIS IS YOUR NEW 'BUILD ONLY' CONFIGURATION ---
+            "name": "SCons Build Only",
+            "type": "cppdbg",
+            "request": "launch",
+            "preLaunchTask": "scons-build-only", 
+            "program": "debugonly.exe", //fake program to allow the task to run
+            "args": ["/C", "echo Build task finished."], // The /C tells cmd to run the command and then terminate
+            "cwd": "${workspaceFolder}",
+            "internalConsoleOptions": "neverOpen" // Keeps the terminal clean
+        }
+        
+    ]
+}

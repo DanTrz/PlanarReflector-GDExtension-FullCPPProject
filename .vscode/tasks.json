@@ -1,0 +1,20 @@
+{
+    // See https://go.microsoft.com/fwlink/?Link...
+    // for the documentation about the tasks.json format
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "buildCPP",
+            "type": "shell",
+            "command": "scons -j12 target=template_debug debug_symbols=yes"
+        },
+        {
+            // THIS IS THE NEW TASK FOR YOUR SPECIFIC BUILD COMMAND
+            "label": "scons-build-only",
+            "type": "shell",
+            // Your exact command goes here
+            "command": "scons -j12 target=template_debug debug_symbols=yes",
+            "problemMatcher": ["$msCompile"]
+        }
+    ]
+}

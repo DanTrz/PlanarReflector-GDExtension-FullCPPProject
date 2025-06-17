@@ -1,0 +1,4 @@
+C:/Local Documents/Development/Godot/Godot Projects/PlanarReflector GDExtension/build/CMakeFiles/generate_bindings.dir
+C:/Local Documents/Development/Godot/Godot Projects/PlanarReflector GDExtension/build/CMakeFiles/godot-cpp.dir
+C:/Local Documents/Development/Godot/Godot Projects/PlanarReflector GDExtension/build/CMakeFiles/ALL_BUILD.dir
+C:/Local Documents/Development/Godot/Godot Projects/PlanarReflector GDExtension/build/CMakeFiles/ZERO_CHECK.dir

@@ -1,0 +1,18 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="17.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <CustomBuild Include="C:\Local Documents\Development\Godot\Godot Projects\PlanarReflector GDExtension\godot-cpp\gdextension\extension_api.json" />
+    <CustomBuild Include="C:\Local Documents\Development\Godot\Godot Projects\PlanarReflector GDExtension\build\CMakeFiles\4ea48347bd6e50410a68a9fd75b79f08\generate_bindings.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+    <CustomBuild Include="C:\Local Documents\Development\Godot\Godot Projects\PlanarReflector GDExtension\godot-cpp\CMakeLists.txt" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="C:\Local Documents\Development\Godot\Godot Projects\PlanarReflector GDExtension\build\CMakeFiles\generate_bindings" />
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="CMake Rules">
+      <UniqueIdentifier>{50946D75-8FD7-3800-A6D0-087C7C9FBB1B}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+</Project>
