@@ -95,9 +95,13 @@ namespace godot {
 
         //List custom functions and/or built in from here
         void _process(double delta) override; 
-        void _ready() override;  
+        void _ready() override;
+        
+        bool is_active = true;
 
-        //Setters and Getters - Required for Exported Variables Properties
+        // //Setters and Getters - Required for Exported Variables Properties
+        void set_is_active(bool p_active);
+        bool get_is_active() const;
         
         // Core camera and resolution controls
         void set_main_camera(Camera3D *p_camera);

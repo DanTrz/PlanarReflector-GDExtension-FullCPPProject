@@ -24,7 +24,9 @@ using namespace godot;
 //Define your constructor (Must have)
 PlanarReflectorCPP::PlanarReflectorCPP() 
 {  
-    // Initialize default values to match GDScript version
+
+    // Initialize default values
+    is_active = true;
     reflection_camera_resolution = Vector2i(1920, 1080);
     ortho_scale_multiplier = 1.0;
     ortho_uv_scale = 1.0;
@@ -48,7 +50,7 @@ PlanarReflectorCPP::PlanarReflectorCPP()
     rotation_threshold = 0.001;
     is_layer_one_active = true;
 
-    UtilityFunctions::print("PlanarReflectorCPP Constructor ready");
+    // UtilityFunctions::print("PlanarReflectorCPP Constructor ready");
 }
 
 //Define your destructor (Must have)
@@ -60,6 +62,8 @@ PlanarReflectorCPP::~PlanarReflectorCPP()
 //Define the implementation of the functions you have in the header file from here
 void PlanarReflectorCPP::_process(double delta) 
 {
+    if(!is_active) return;
+
     if (!main_camera || !reflect_camera || !reflect_viewport) {
         return;
     }
@@ -96,10 +100,8 @@ void PlanarReflectorCPP::_ready()
     // Initialize offset cache
     update_offset_cache();
     
-    UtilityFunctions::print("PlanarReflectorCPP ready completed");
+    //UtilityFunctions::print("PlanarReflectorCPP ready completed");
 }
-
-// PRIVATE HELPER METHODS IMPLEMENTATION
 
 void PlanarReflectorCPP::setup_reflection_viewport()
 {
@@ -117,7 +119,7 @@ void PlanarReflectorCPP::setup_reflection_viewport()
 void PlanarReflectorCPP::setup_reflection_camera()
 {
     if (!reflect_viewport) {
-        UtilityFunctions::printerr("Reflect viewport not created yet!");
+        //UtilityFunctions::printerr("Reflect viewport not created yet!");
         return;
     }
 
@@ -422,6 +424,9 @@ bool PlanarReflectorCPP::should_update_reflection()
 void PlanarReflectorCPP::_bind_methods() 
 {
     //Method bindings to be able to access those from GDScript and make Godot "See those"
+    ClassDB::bind_method(D_METHOD("set_is_active", "p_active"), &PlanarReflectorCPP::set_is_active);
+    ClassDB::bind_method(D_METHOD("get_is_active"), &PlanarReflectorCPP::get_is_active);
+    ADD_PROPERTY(PropertyInfo(Variant::BOOL, "is_active"), "set_is_active", "get_is_active");
 
     // Core camera and resolution properties
     ClassDB::bind_method(D_METHOD("set_main_camera", "p_camera"), &PlanarReflectorCPP::set_main_camera);
@@ -507,6 +512,9 @@ void PlanarReflectorCPP::_bind_methods()
 
 // SETTERS AND GETTERS IMPLEMENTATION FROM HERE:
 
+void PlanarReflectorCPP::set_is_active(const bool p_active) { is_active = p_active; };
+bool PlanarReflectorCPP::get_is_active() const { return is_active; };
+
 // Core camera and resolution controls
 void PlanarReflectorCPP::set_main_camera(Camera3D *p_camera) 
 {
@@ -520,11 +528,7 @@ void PlanarReflectorCPP::set_main_camera(Camera3D *p_camera)
     }
 }
 
-Camera3D* PlanarReflectorCPP::get_main_camera() const 
-{
-    return main_camera;
-}
-
+Camera3D* PlanarReflectorCPP::get_main_camera() const {return main_camera;}
 void PlanarReflectorCPP::set_reflection_camera_resolution(const Vector2i p_resolution) 
 { 
     reflection_camera_resolution = p_resolution;
@@ -535,87 +539,46 @@ void PlanarReflectorCPP::set_reflection_camera_resolution(const Vector2i p_resol
     }
 }
 
-Vector2i PlanarReflectorCPP::get_reflection_camera_resolution() const 
-{
-    return reflection_camera_resolution; 
-}
-
+Vector2i PlanarReflectorCPP::get_reflection_camera_resolution() const {return reflection_camera_resolution;}
 // Camera Controls Group
-void PlanarReflectorCPP::set_ortho_scale_multiplier(double p_multiplier) 
-{
-    ortho_scale_multiplier = p_multiplier;
-}
+void PlanarReflectorCPP::set_ortho_scale_multiplier(double p_multiplier) {ortho_scale_multiplier = p_multiplier;}
+double PlanarReflectorCPP::get_ortho_scale_multiplier() const {return ortho_scale_multiplier;}
 
-double PlanarReflectorCPP::get_ortho_scale_multiplier() const 
-{
-    return ortho_scale_multiplier;
-}
+void PlanarReflectorCPP::set_ortho_uv_scale(double p_scale) {ortho_uv_scale = p_scale;}
+double PlanarReflectorCPP::get_ortho_uv_scale() const {return ortho_uv_scale;}
 
-void PlanarReflectorCPP::set_ortho_uv_scale(double p_scale) 
-{
-    ortho_uv_scale = p_scale;
-}
-
-double PlanarReflectorCPP::get_ortho_uv_scale() const 
-{
-    return ortho_uv_scale;
-}
-
-void PlanarReflectorCPP::set_auto_detect_camera_mode(bool p_auto_detect)
-{
-    auto_detect_camera_mode = p_auto_detect;
-}
-
-bool PlanarReflectorCPP::get_auto_detect_camera_mode() const
-{
-    return auto_detect_camera_mode;
-}
-
+void PlanarReflectorCPP::set_auto_detect_camera_mode(bool p_auto_detect){auto_detect_camera_mode = p_auto_detect;}
+bool PlanarReflectorCPP::get_auto_detect_camera_mode() const{return auto_detect_camera_mode;}
 // Reflection Layers and Environment Group
 void PlanarReflectorCPP::set_reflection_layers(int p_layers)
 {
-    reflection_layers = p_layers;
-    
+    reflection_layers = p_layers;    
     // Update reflection camera cull mask if it exists
     if (reflect_camera) {
         setup_reflection_layers();
     }
 }
-
-int PlanarReflectorCPP::get_reflection_layers() const
-{
-    return reflection_layers;
-}
+int PlanarReflectorCPP::get_reflection_layers() const{return reflection_layers;}
 
 void PlanarReflectorCPP::set_use_custom_environment(bool p_use_custom)
 {
     use_custom_environment = p_use_custom;
-    
     // Update environment setup if reflection camera exists
     if (reflect_camera) {
         setup_reflection_environment();
     }
 }
 
-bool PlanarReflectorCPP::get_use_custom_environment() const
-{
-    return use_custom_environment;
-}
-
+bool PlanarReflectorCPP::get_use_custom_environment() const{return use_custom_environment;}
 void PlanarReflectorCPP::set_custom_environment(Environment *p_environment)
 {
     custom_environment = Object::cast_to<Environment>(p_environment);
-    
     // Update environment setup if reflection camera exists and we're using custom environment
     if (reflect_camera && use_custom_environment) {
         setup_reflection_environment();
     }
 }
-
-Environment* PlanarReflectorCPP::get_custom_environment() const
-{
-    return custom_environment;
-}
+Environment* PlanarReflectorCPP::get_custom_environment() const{return custom_environment;}
 
 // Reflection Offset Control Group
 void PlanarReflectorCPP::set_enable_reflection_offset(bool p_enable)
@@ -623,104 +586,43 @@ void PlanarReflectorCPP::set_enable_reflection_offset(bool p_enable)
     enable_reflection_offset = p_enable;
     update_offset_cache();
 }
-
-bool PlanarReflectorCPP::get_enable_reflection_offset() const
-{
-    return enable_reflection_offset;
-}
+bool PlanarReflectorCPP::get_enable_reflection_offset() const{return enable_reflection_offset;}
 
 void PlanarReflectorCPP::set_reflection_offset_position(const Vector3 &p_position)
 {
     reflection_offset_position = p_position;
     update_offset_cache();
 }
-
-Vector3 PlanarReflectorCPP::get_reflection_offset_position() const
-{
-    return reflection_offset_position;
-}
+Vector3 PlanarReflectorCPP::get_reflection_offset_position() const{ return reflection_offset_position;}
 
 void PlanarReflectorCPP::set_reflection_offset_rotation(const Vector3 &p_rotation)
 {
     reflection_offset_rotation = p_rotation;
     update_offset_cache();
 }
-
-Vector3 PlanarReflectorCPP::get_reflection_offset_rotation() const
-{
-    return reflection_offset_rotation;
-}
+Vector3 PlanarReflectorCPP::get_reflection_offset_rotation() const{return reflection_offset_rotation;}
 
 void PlanarReflectorCPP::set_reflection_offset_scale(double p_scale)
 {
     reflection_offset_scale = p_scale;
     update_offset_cache();
 }
+double PlanarReflectorCPP::get_reflection_offset_scale() const{return reflection_offset_scale;}
 
-double PlanarReflectorCPP::get_reflection_offset_scale() const
-{
-    return reflection_offset_scale;
-}
-
-void PlanarReflectorCPP::set_offset_blend_mode(int p_mode)
-{
-    // Clamp to valid range (0-2)
-    offset_blend_mode = Math::clamp(p_mode, 0, 2);
-}
-
-int PlanarReflectorCPP::get_offset_blend_mode() const
-{
-    return offset_blend_mode;
-}
-
+void PlanarReflectorCPP::set_offset_blend_mode(int p_mode){offset_blend_mode = Math::clamp(p_mode, 0, 2);}
+int PlanarReflectorCPP::get_offset_blend_mode() const{return offset_blend_mode;}
 // Performance Controls Group
-void PlanarReflectorCPP::set_update_frequency(int p_frequency)
-{
-    // Ensure minimum frequency of 1
-    update_frequency = Math::max(p_frequency, 1);
-}
+void PlanarReflectorCPP::set_update_frequency(int p_frequency){update_frequency = Math::max(p_frequency, 1);}
+int PlanarReflectorCPP::get_update_frequency() const{return update_frequency;}
 
-int PlanarReflectorCPP::get_update_frequency() const
-{
-    return update_frequency;
-}
+void PlanarReflectorCPP::set_use_lod(bool p_use_lod){use_lod = p_use_lod;}
+bool PlanarReflectorCPP::get_use_lod() const{return use_lod;}
 
-void PlanarReflectorCPP::set_use_lod(bool p_use_lod)
-{
-    use_lod = p_use_lod;
-}
+void PlanarReflectorCPP::set_lod_distance_near(double p_distance){lod_distance_near = p_distance;}
+double PlanarReflectorCPP::get_lod_distance_near() const{return lod_distance_near;}
 
-bool PlanarReflectorCPP::get_use_lod() const
-{
-    return use_lod;
-}
+void PlanarReflectorCPP::set_lod_distance_far(double p_distance){lod_distance_far = p_distance;}
+double PlanarReflectorCPP::get_lod_distance_far() const{return lod_distance_far;}
 
-void PlanarReflectorCPP::set_lod_distance_near(double p_distance)
-{
-    lod_distance_near = p_distance;
-}
-
-double PlanarReflectorCPP::get_lod_distance_near() const
-{
-    return lod_distance_near;
-}
-
-void PlanarReflectorCPP::set_lod_distance_far(double p_distance)
-{
-    lod_distance_far = p_distance;
-}
-
-double PlanarReflectorCPP::get_lod_distance_far() const
-{
-    return lod_distance_far;
-}
-
-void PlanarReflectorCPP::set_lod_resolution_multiplier(double p_multiplier)
-{
-    lod_resolution_multiplier = p_multiplier;
-}
-
-double PlanarReflectorCPP::get_lod_resolution_multiplier() const
-{
-    return lod_resolution_multiplier;
-}
+void PlanarReflectorCPP::set_lod_resolution_multiplier(double p_multiplier){lod_resolution_multiplier = p_multiplier;}
+double PlanarReflectorCPP::get_lod_resolution_multiplier() const{return lod_resolution_multiplier;}

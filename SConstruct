@@ -17,6 +17,10 @@ env.Append(CPPPATH=["src/"])
 sources = Glob("src/*.cpp")
 
 #//ATTENTION - MAKE SURE YOU ARE UPDATING THE PATH ACCORDINGLY
+if env["platform"] == "windows":
+    # Disable treating warning 4099 as an error
+    env.Append(LINKFLAGS=["/ignore:4099"])
+    
 if env["platform"] == "macos":
     library = env.SharedLibrary(
         "PlanarReflector-CPP/Addon/PlanarReflectorCpp//bin/PlanarReflectorCPP.{}.{}.framework/PlanarReflectorCPP.{}.{}".format(
