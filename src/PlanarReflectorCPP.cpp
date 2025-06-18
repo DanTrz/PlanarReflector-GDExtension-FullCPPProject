@@ -57,7 +57,6 @@ PlanarReflectorCPP::~PlanarReflectorCPP()
 void PlanarReflectorCPP::_ready() 
 {
     // if (Engine::get_singleton()->is_editor_hint()) return;
-    active_shader_material = nullptr;
 
     // Add to group for easy access from editor plugin
     add_to_group("planar_reflectors");
@@ -70,10 +69,15 @@ void PlanarReflectorCPP::_ready()
     {
         run_game_setup_init();
     }
+
+
 }
 
 void PlanarReflectorCPP::run_editor_setup_init()
 {
+    // Find the editor helper first
+    find_editor_helper();
+
     // Create editor-specific viewport and camera
     editor_reflect_viewport = memnew(SubViewport);
     editor_reflect_viewport->set_name("editor_reflect_viewport");
@@ -110,6 +114,29 @@ void PlanarReflectorCPP::run_editor_setup_init()
     
     UtilityFunctions::print("PlanarReflectorCPP editor ready completed");
 }
+
+#pragma region // Editor Functions
+void PlanarReflectorCPP::find_editor_helper() {
+    if (!Engine::get_singleton()->is_editor_hint()) {
+        return;
+    }
+    
+    // Try to find the editor helper singleton
+    if (Engine::get_singleton()->has_singleton("PlanarReflectorEditorHelper")) {
+        editor_helper = Engine::get_singleton()->get_singleton("PlanarReflectorEditorHelper");
+        if (editor_helper) {
+            UtilityFunctions::print("PlanarReflectorCPP: Found editor helper");
+        }
+    }
+}
+
+Viewport* PlanarReflectorCPP::get_active_viewport() {
+    if (Engine::get_singleton()->is_editor_hint() && active_main_camera) {
+        return active_main_camera->get_viewport();
+    }
+    return get_viewport();
+}
+#pragma endregion
 
 void PlanarReflectorCPP::run_game_setup_init()
 {
@@ -329,7 +356,27 @@ void PlanarReflectorCPP::update_viewport()
         return;
     }
 
-    Vector2i target_size = get_viewport()->get_visible_rect().size;
+    Vector2i target_size;
+    
+    // Get the correct viewport size
+    if (Engine::get_singleton()->is_editor_hint() && editor_helper) {
+        // Try to get editor viewport size from helper
+        Variant size_var = editor_helper->call("get_editor_viewport_size");
+        if (size_var.get_type() == Variant::VECTOR2I) {
+            target_size = size_var;
+        } else {
+            // Fallback to active camera's viewport
+            Viewport* vp = get_active_viewport();
+            if (vp) {
+                target_size = vp->get_visible_rect().size;
+            } else {
+                target_size = Vector2i(1920, 1080); // Default fallback
+            }
+        }
+    } else {
+        // Game mode - use regular viewport
+        target_size = get_viewport()->get_visible_rect().size;
+    }
     
     // Apply LOD based on distance
     if (use_lod && active_main_camera) {

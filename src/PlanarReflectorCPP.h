@@ -33,6 +33,7 @@ namespace godot {
         Camera3D *editor_camera = nullptr;
         Camera3D *editor_reflect_camera = nullptr;
         SubViewport *editor_reflect_viewport = nullptr;
+        Object* editor_helper = nullptr;
 
         // Core Active reflection components (pointers to either game or editor components)
         Camera3D *active_main_camera = nullptr;
@@ -84,6 +85,7 @@ namespace godot {
         // Internal helper methods
         void run_game_setup_init();
         void run_editor_setup_init();
+        void find_editor_helper();
         void setup_reflection_viewport();
         void setup_reflection_camera();
         void setup_reflection_layers();
@@ -111,6 +113,7 @@ namespace godot {
         void _exit_tree() override;
         
         bool is_active = true;
+        Viewport* get_active_viewport();
 
         // //Setters and Getters - Required for Exported Variables Properties
         void set_is_active(bool p_active);
