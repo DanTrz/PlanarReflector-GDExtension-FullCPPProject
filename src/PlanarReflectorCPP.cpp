@@ -117,8 +117,18 @@ void PlanarReflectorCPP::setup_reflection_viewport()
     reflect_viewport->set_msaa_3d(Viewport::MSAA_4X);
     reflect_viewport->set_positional_shadow_atlas_size(2048);
     reflect_viewport->set_use_own_world_3d(false);
+    
+    // Add these for consistency:
+    reflect_viewport->set_transparent_background(false);
+    reflect_viewport->set_use_debanding(false);
+    reflect_viewport->set_screen_space_aa(Viewport::SCREEN_SPACE_AA_DISABLED);
+    
+    // Force clear color in editor
+    if (Engine::get_singleton()->is_editor_hint()) {
+        reflect_viewport->set_transparent_background(true);
+        //reflect_viewport->set_environment_custom_color(Color(0.1, 0.1, 0.1));
+    }
 }
-
 void PlanarReflectorCPP::setup_reflection_camera()
 {
     if (!reflect_viewport) {
@@ -454,6 +464,7 @@ Camera3D* PlanarReflectorCPP::get_active_camera() {
     return main_camera;
 }
 
+
 Viewport* PlanarReflectorCPP::get_active_viewport() {
     Camera3D* active_cam = get_active_camera();
     if (active_cam) {
@@ -579,6 +590,12 @@ void PlanarReflectorCPP::_bind_methods()
     ClassDB::bind_method(D_METHOD("set_lod_resolution_multiplier", "p_multiplier"), &PlanarReflectorCPP::set_lod_resolution_multiplier);
     ClassDB::bind_method(D_METHOD("get_lod_resolution_multiplier"), &PlanarReflectorCPP::get_lod_resolution_multiplier);
     ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "lod_resolution_multiplier", PROPERTY_HINT_RANGE, "0.1,1.0,0.01"), "set_lod_resolution_multiplier", "get_lod_resolution_multiplier");
+
+    //EDITOR PLUGIN RELATED ITEMS - MAKE WORK IN EDITOR
+    ClassDB::bind_method(D_METHOD("set_force_stable_editor_environment", "p_force"), &PlanarReflectorCPP::set_force_stable_editor_environment);
+    ClassDB::bind_method(D_METHOD("get_force_stable_editor_environment"), &PlanarReflectorCPP::get_force_stable_editor_environment);
+    ADD_PROPERTY(PropertyInfo(Variant::BOOL, "force_stable_editor_environment"), "set_force_stable_editor_environment", "get_force_stable_editor_environment");
+
 }
 
 // SETTERS AND GETTERS IMPLEMENTATION FROM HERE:
@@ -697,3 +714,11 @@ double PlanarReflectorCPP::get_lod_distance_far() const{return lod_distance_far;
 
 void PlanarReflectorCPP::set_lod_resolution_multiplier(double p_multiplier){lod_resolution_multiplier = p_multiplier;}
 double PlanarReflectorCPP::get_lod_resolution_multiplier() const{return lod_resolution_multiplier;}
+
+void PlanarReflectorCPP::set_force_stable_editor_environment(bool p_force) { 
+    force_stable_editor_environment = p_force; 
+    if (Engine::get_singleton()->is_editor_hint()) {
+        setup_reflection_environment();
+    }
+}
+bool PlanarReflectorCPP::get_force_stable_editor_environment() const { return force_stable_editor_environment; }

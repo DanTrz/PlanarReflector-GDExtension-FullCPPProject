@@ -89,6 +89,9 @@ namespace godot {
         Object* editor_helper = nullptr;
         Camera3D* editor_camera = nullptr;
         bool use_editor_camera = false;
+        bool force_stable_editor_environment = true;
+        Color editor_ambient_color = Color(0.5, 0.5, 0.5);
+        float editor_ambient_energy = 0.5;
     
         //EDITOR PLUGIN REFERENCES  -Methods
         void find_editor_helper();
@@ -108,6 +111,10 @@ namespace godot {
         void _ready() override;
         
         bool is_active = true;
+        
+        //Editor Plugin Setters and Getters
+        void set_force_stable_editor_environment(bool p_force);
+        bool get_force_stable_editor_environment() const;
 
         // //Setters and Getters - Required for Exported Variables Properties
         void set_is_active(bool p_active);
