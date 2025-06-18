@@ -45,6 +45,7 @@ PlanarReflectorCPP::PlanarReflectorCPP()
     position_threshold = 0.01;
     rotation_threshold = 0.001;
     is_layer_one_active = true;
+
 }
 
 //Define your destructor (Must have)
@@ -55,7 +56,9 @@ PlanarReflectorCPP::~PlanarReflectorCPP()
 
 void PlanarReflectorCPP::_ready() 
 {
-    if (Engine::get_singleton()->is_editor_hint()) return;
+    // if (Engine::get_singleton()->is_editor_hint()) return;
+    active_shader_material = nullptr;
+
     // Add to group for easy access from editor plugin
     add_to_group("planar_reflectors");
     
@@ -73,6 +76,7 @@ void PlanarReflectorCPP::run_editor_setup_init()
 {
     // Create editor-specific viewport and camera
     editor_reflect_viewport = memnew(SubViewport);
+    editor_reflect_viewport->set_name("editor_reflect_viewport");
     add_child(editor_reflect_viewport);
     
     editor_reflect_viewport->set_size(reflection_camera_resolution);
@@ -134,8 +138,8 @@ void PlanarReflectorCPP::run_game_setup_init()
 
 void PlanarReflectorCPP::_process(double delta) 
 {
-     if (Engine::get_singleton()->is_editor_hint()) return;
-     
+    //  if (Engine::get_singleton()->is_editor_hint()) return;
+
     if (!is_active) return;
 
     // Check if we have valid active components
@@ -165,6 +169,7 @@ void PlanarReflectorCPP::setup_reflection_viewport()
     if(game_reflect_viewport == nullptr)
     {
         game_reflect_viewport = memnew(SubViewport);
+        game_reflect_viewport->set_name("game_reflect_viewport");
         add_child(game_reflect_viewport);
         
         game_reflect_viewport->set_size(reflection_camera_resolution);
@@ -294,7 +299,8 @@ void PlanarReflectorCPP::update_reflection_camera()
     active_reflect_camera->set_global_transform(final_reflection_transform);
     
     // Pass parameters to shader
-    update_shader_parameters();
+    call_deferred("update_shader_parameters");
+    //update_shader_parameters();
 }
 
 void PlanarReflectorCPP::update_camera_projection()
@@ -349,7 +355,21 @@ void PlanarReflectorCPP::update_shader_parameters()
         return;
     }
 
-    // Update all shader parameters including advanced features
+    // // Update all shader parameters including advanced features
+    // if (active_shader_material == nullptr) {
+    //     Ref<Material> mat = get_active_material(0);
+    //     active_shader_material = Object::cast_to<ShaderMaterial>(mat.ptr());
+    // }
+
+    // Clear material reference if viewport changed
+    if (active_shader_material != nullptr) {
+        Ref<Material> current_mat = get_active_material(0);
+        if (current_mat.ptr() != active_shader_material) {
+            active_shader_material = nullptr;
+        }
+    }
+
+    // Get fresh material reference
     if (active_shader_material == nullptr) {
         Ref<Material> mat = get_active_material(0);
         active_shader_material = Object::cast_to<ShaderMaterial>(mat.ptr());
@@ -588,6 +608,8 @@ void PlanarReflectorCPP::_bind_methods()
     ClassDB::bind_method(D_METHOD("set_lod_resolution_multiplier", "p_multiplier"), &PlanarReflectorCPP::set_lod_resolution_multiplier);
     ClassDB::bind_method(D_METHOD("get_lod_resolution_multiplier"), &PlanarReflectorCPP::get_lod_resolution_multiplier);
     ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "lod_resolution_multiplier", PROPERTY_HINT_RANGE, "0.1,1.0,0.01"), "set_lod_resolution_multiplier", "get_lod_resolution_multiplier");
+
+     ClassDB::bind_method(D_METHOD("update_shader_parameters"), &PlanarReflectorCPP::update_shader_parameters);
 }
 
 // SETTERS AND GETTERS IMPLEMENTATION FROM HERE:
