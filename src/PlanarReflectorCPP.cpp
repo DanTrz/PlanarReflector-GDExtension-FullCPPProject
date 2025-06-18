@@ -99,6 +99,9 @@ void PlanarReflectorCPP::_ready()
     
     // Initialize offset cache
     update_offset_cache();
+
+     // Try to find editor helper if in editor
+    find_editor_helper();
     
     //UtilityFunctions::print("PlanarReflectorCPP ready completed");
 }
@@ -208,7 +211,8 @@ Plane PlanarReflectorCPP::calculate_reflection_plane()
 
 void PlanarReflectorCPP::update_reflection_camera()
 {
-    if (!main_camera || !reflect_camera) {
+    Camera3D* active_cam = get_active_camera();
+    if (!active_cam || !reflect_camera) {
         return;
     }
 
@@ -219,7 +223,7 @@ void PlanarReflectorCPP::update_reflection_camera()
     Plane reflection_plane = calculate_reflection_plane();
     cached_reflection_plane = reflection_plane;
     
-    Vector3 cam_pos = main_camera->get_global_transform().get_origin();
+    Vector3 cam_pos = active_cam->get_global_transform().get_origin();
     
     Vector3 proj_pos = reflection_plane.project(cam_pos);
     Vector3 mirrored_pos = cam_pos + (proj_pos - cam_pos) * 2.0;
@@ -228,7 +232,7 @@ void PlanarReflectorCPP::update_reflection_camera()
     Transform3D base_reflection_transform;
     base_reflection_transform.set_origin(mirrored_pos);
     
-    Basis main_basis = main_camera->get_global_transform().get_basis();
+    Basis main_basis = active_cam->get_global_transform().get_basis();
     Vector3 normal = reflection_plane.get_normal();
     
     Basis reflection_basis;
@@ -268,26 +272,45 @@ void PlanarReflectorCPP::update_camera_projection()
     }
 }
 
-void PlanarReflectorCPP::update_viewport()
-{
+void PlanarReflectorCPP::update_viewport() {
     if (!reflect_viewport) {
         return;
     }
 
-    Vector2i target_size = get_viewport()->get_visible_rect().size;
+    Vector2i target_size;
+    
+    if (Engine::get_singleton()->is_editor_hint() && editor_helper) {
+        // Get editor viewport size from helper
+        Variant size_var = editor_helper->call("get_editor_viewport_size");
+        if (size_var.get_type() == Variant::VECTOR2I) {
+            target_size = size_var;
+        } else {
+            // Fallback
+            target_size = get_viewport()->get_visible_rect().size;
+        }
+    } else {
+        // Game mode - use regular viewport
+        target_size = get_viewport()->get_visible_rect().size;
+    }
     
     // Apply LOD based on distance
     if (use_lod && main_camera) {
-        double distance = get_global_transform().get_origin().distance_to(main_camera->get_global_transform().get_origin());
+        Camera3D* active_cam = get_active_camera();
+        double distance = get_global_transform().get_origin().distance_to(
+            active_cam->get_global_transform().get_origin()
+        );
         double lod_factor = 1.0;
         
         if (distance > lod_distance_near) {
-            double lerp_factor = Math::clamp((distance - lod_distance_near) / (lod_distance_far - lod_distance_near), 0.0, 1.0);
+            double lerp_factor = Math::clamp(
+                (distance - lod_distance_near) / (lod_distance_far - lod_distance_near), 
+                0.0, 1.0
+            );
             lod_factor = Math::lerp(1.0, lod_resolution_multiplier, lerp_factor);
         }
         
         target_size = Vector2i((double)target_size.x * lod_factor, (double)target_size.y * lod_factor);
-        target_size.x = Math::max(target_size.x, 128); // Minimum resolution
+        target_size.x = Math::max(target_size.x, 128);
         target_size.y = Math::max(target_size.y, 128);
     }
     
@@ -394,6 +417,54 @@ void PlanarReflectorCPP::update_offset_cache()
         last_offset_rotation = reflection_offset_rotation;
     }
 }
+
+//CODE REQUIRED TO USE THE EDITOR PLUGIN
+#pragma region // EDITOR PLUGIN HELPER FUNCTIONS
+void PlanarReflectorCPP::find_editor_helper() {
+    if (!Engine::get_singleton()->is_editor_hint()) {
+        return;
+    }
+    
+    // Try to find the editor helper singleton
+    if (Engine::get_singleton()->has_singleton("PlanarReflectorEditorHelper")) {
+        editor_helper = Engine::get_singleton()->get_singleton("PlanarReflectorEditorHelper");
+        if (editor_helper) {
+            UtilityFunctions::print("PlanarReflectorCPP: Found editor helper");
+        }
+    }
+}
+
+
+Camera3D* PlanarReflectorCPP::get_active_camera() {
+    if (Engine::get_singleton()->is_editor_hint() && editor_helper) {
+        // Try to get editor camera from helper
+        Variant camera_var = editor_helper->call("get_editor_camera");
+        if (camera_var.get_type() == Variant::OBJECT) {
+            Object* cam_obj = camera_var;
+            if (cam_obj) {
+                Camera3D* ed_cam = Object::cast_to<Camera3D>(cam_obj);
+                if (ed_cam && ed_cam->is_inside_tree()) {
+                    return ed_cam;
+                }
+            }
+        }
+    }
+    
+    // Fallback to main camera
+    return main_camera;
+}
+
+Viewport* PlanarReflectorCPP::get_active_viewport() {
+    Camera3D* active_cam = get_active_camera();
+    if (active_cam) {
+        return active_cam->get_viewport();
+    }
+    return get_viewport();
+}
+
+
+#pragma endregion
+
 
 bool PlanarReflectorCPP::should_update_reflection()
 {

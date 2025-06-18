@@ -85,6 +85,16 @@ namespace godot {
         void update_offset_cache();
         bool should_update_reflection();
 
+        //EDITOR PLUGIN REFERENCES  -Variables
+        Object* editor_helper = nullptr;
+        Camera3D* editor_camera = nullptr;
+        bool use_editor_camera = false;
+    
+        //EDITOR PLUGIN REFERENCES  -Methods
+        void find_editor_helper();
+        Camera3D* get_active_camera();
+        Viewport* get_active_viewport();
+
     protected:
         static void _bind_methods(); //This allows to bind methods to the Godot System
 
