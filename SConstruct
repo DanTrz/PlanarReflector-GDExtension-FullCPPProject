@@ -23,14 +23,14 @@ if env["platform"] == "windows":
     
 if env["platform"] == "macos":
     library = env.SharedLibrary(
-        "PlanarReflector-CPP/Addon/PlanarReflectorCpp//bin/PlanarReflectorCPP.{}.{}.framework/PlanarReflectorCPP.{}.{}".format(
+        "PlanarReflector-CPP/addons/PlanarReflectorCpp//bin/PlanarReflectorCPP.{}.{}.framework/PlanarReflectorCPP.{}.{}".format(
             env["platform"], env["target"], env["platform"], env["target"]
         ),
         source=sources,
     )
 else:
     library = env.SharedLibrary(
-        "PlanarReflector-CPP/Addon/PlanarReflectorCpp/bin/PlanarReflectorCPP{}{}".format(env["suffix"], env["SHLIBSUFFIX"]),
+        "PlanarReflector-CPP/addons/PlanarReflectorCpp/bin/PlanarReflectorCPP{}{}".format(env["suffix"], env["SHLIBSUFFIX"]),
         source=sources,
     )
 

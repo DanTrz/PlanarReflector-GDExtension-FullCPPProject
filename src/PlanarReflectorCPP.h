@@ -24,10 +24,20 @@ namespace godot {
     
     //Define Variables/functions => group variables by permission (Private, protected, etc)
     private:
-        // Core reflection components
-        Camera3D *main_camera = nullptr;
-        Camera3D *reflect_camera = nullptr;
-        SubViewport *reflect_viewport = nullptr;
+        // Core GAME reflection components
+        Camera3D *game_main_camera = nullptr;
+        Camera3D *game_reflect_camera = nullptr;
+        SubViewport *game_reflect_viewport = nullptr;
+
+        // Core Editor reflection components
+        Camera3D *editor_camera = nullptr;
+        Camera3D *editor_reflect_camera = nullptr;
+        SubViewport *editor_reflect_viewport = nullptr;
+
+        // Core Active reflection components (pointers to either game or editor components)
+        Camera3D *active_main_camera = nullptr;
+        Camera3D *active_reflect_camera = nullptr;
+        SubViewport *active_reflect_viewport = nullptr;
         
         // Resolution and camera controls
         Vector2i reflection_camera_resolution = Vector2i(1920, 1080);
@@ -72,6 +82,8 @@ namespace godot {
         Vector3 last_offset_rotation = Vector3();
 
         // Internal helper methods
+        void run_game_setup_init();
+        void run_editor_setup_init();
         void setup_reflection_viewport();
         void setup_reflection_camera();
         void setup_reflection_layers();
@@ -96,6 +108,7 @@ namespace godot {
         //List custom functions and/or built in from here
         void _process(double delta) override; 
         void _ready() override;
+        void _exit_tree() override;
         
         bool is_active = true;
 
@@ -104,8 +117,11 @@ namespace godot {
         bool get_is_active() const;
         
         // Core camera and resolution controls
-        void set_main_camera(Camera3D *p_camera);
-        Camera3D *get_main_camera() const;
+        void set_game_main_camera(Camera3D *p_camera);
+        Camera3D *get_game_main_camera() const;
+
+        void set_editor_camera(Camera3D *p_camera);
+        Camera3D *get_editor_camera() const;
 
         void set_reflection_camera_resolution(const Vector2i p_resolution);
         Vector2i get_reflection_camera_resolution() const;
