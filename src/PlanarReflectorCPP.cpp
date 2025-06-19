@@ -22,6 +22,7 @@ using namespace godot;
 PlanarReflectorCPP::PlanarReflectorCPP() 
 {  
     // Initialize default values
+    is_editor_setup_finished = false;
     is_active = true;
     reflection_camera_resolution = Vector2i(1920, 1080);
     ortho_scale_multiplier = 1.0;
@@ -56,25 +57,34 @@ PlanarReflectorCPP::~PlanarReflectorCPP()
 
 void PlanarReflectorCPP::_ready() 
 {
-    // if (Engine::get_singleton()->is_editor_hint()) return;
-
     // Add to group for easy access from editor plugin
     add_to_group("planar_reflectors");
+    clean_viewports();
     
     if (Engine::get_singleton()->is_editor_hint())
     {
-        run_editor_setup_init();
+        PlanarReflectorCPP::call_deferred("run_editor_setup_init");
+        //run_editor_setup_init();
     }
     else
     {
-        run_game_setup_init();
+        PlanarReflectorCPP::call_deferred("run_game_setup_init");
+        //run_game_setup_init();
     }
 
+}
 
+void PlanarReflectorCPP::clean_viewports()
+{
+
+   game_reflect_viewport = nullptr;
+   editor_reflect_viewport = nullptr;
+   active_reflect_viewport = nullptr;
 }
 
 void PlanarReflectorCPP::run_editor_setup_init()
 {
+    is_editor_setup_finished = false;
     // Find the editor helper first
     find_editor_helper();
 
@@ -108,35 +118,15 @@ void PlanarReflectorCPP::run_editor_setup_init()
     active_main_camera = editor_camera; // May be null initially, will be set by plugin
     active_reflect_camera = editor_reflect_camera;
     active_reflect_viewport = editor_reflect_viewport;
+
+    //= nullptr;
     
     // Initialize offset cache
     update_offset_cache();
-    
+
+    is_editor_setup_finished = true;
     UtilityFunctions::print("PlanarReflectorCPP editor ready completed");
 }
-
-#pragma region // Editor Functions
-void PlanarReflectorCPP::find_editor_helper() {
-    if (!Engine::get_singleton()->is_editor_hint()) {
-        return;
-    }
-    
-    // Try to find the editor helper singleton
-    if (Engine::get_singleton()->has_singleton("PlanarReflectorEditorHelper")) {
-        editor_helper = Engine::get_singleton()->get_singleton("PlanarReflectorEditorHelper");
-        if (editor_helper) {
-            UtilityFunctions::print("PlanarReflectorCPP: Found editor helper");
-        }
-    }
-}
-
-Viewport* PlanarReflectorCPP::get_active_viewport() {
-    if (Engine::get_singleton()->is_editor_hint() && active_main_camera) {
-        return active_main_camera->get_viewport();
-    }
-    return get_viewport();
-}
-#pragma endregion
 
 void PlanarReflectorCPP::run_game_setup_init()
 {
@@ -163,9 +153,39 @@ void PlanarReflectorCPP::run_game_setup_init()
     UtilityFunctions::print("PlanarReflectorCPP game ready completed");
 }
 
+#pragma region // Editor Functions
+void PlanarReflectorCPP::find_editor_helper() {
+    if (!Engine::get_singleton()->is_editor_hint()) {
+        return;
+    }
+    
+    // Try to find the editor helper singleton
+    if (Engine::get_singleton()->has_singleton("PlanarReflectorEditorHelper")) {
+        editor_helper = Engine::get_singleton()->get_singleton("PlanarReflectorEditorHelper");
+        if (editor_helper) {
+            UtilityFunctions::print("PlanarReflectorCPP: Found editor helper");
+
+        }
+    }
+}
+
+Camera3D* PlanarReflectorCPP::get_active_camera() {
+    return active_main_camera;
+}
+
+Viewport* PlanarReflectorCPP::get_active_viewport() {
+    if (Engine::get_singleton()->is_editor_hint() && active_main_camera) {
+        return active_main_camera->get_viewport();
+    }
+    return get_viewport();
+}
+#pragma endregion
+
+
+
 void PlanarReflectorCPP::_process(double delta) 
 {
-    //  if (Engine::get_singleton()->is_editor_hint()) return;
+    if (Engine::get_singleton()->is_editor_hint() && !is_editor_setup_finished) return;
 
     if (!is_active) return;
 
@@ -656,7 +676,11 @@ void PlanarReflectorCPP::_bind_methods()
     ClassDB::bind_method(D_METHOD("get_lod_resolution_multiplier"), &PlanarReflectorCPP::get_lod_resolution_multiplier);
     ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "lod_resolution_multiplier", PROPERTY_HINT_RANGE, "0.1,1.0,0.01"), "set_lod_resolution_multiplier", "get_lod_resolution_multiplier");
 
-     ClassDB::bind_method(D_METHOD("update_shader_parameters"), &PlanarReflectorCPP::update_shader_parameters);
+    ClassDB::bind_method(D_METHOD("update_shader_parameters"), &PlanarReflectorCPP::update_shader_parameters);
+    ClassDB::bind_method(D_METHOD("get_active_camera"), &PlanarReflectorCPP::get_active_camera);
+    ClassDB::bind_method(D_METHOD("run_editor_setup_init"), &PlanarReflectorCPP::run_editor_setup_init);
+    ClassDB::bind_method(D_METHOD("run_game_setup_init"), &PlanarReflectorCPP::run_game_setup_init);
+
 }
 
 // SETTERS AND GETTERS IMPLEMENTATION FROM HERE:
@@ -684,6 +708,7 @@ void PlanarReflectorCPP::set_game_main_camera(Camera3D *p_camera)
 
 Camera3D* PlanarReflectorCPP::get_game_main_camera() const { return game_main_camera; }
 
+//method called by the plugin to set the editor camera in the PlanarReflector node
 void PlanarReflectorCPP::set_editor_camera(Camera3D *p_camera) 
 {
     editor_camera = Object::cast_to<Camera3D>(p_camera);
@@ -701,6 +726,9 @@ void PlanarReflectorCPP::set_editor_camera(Camera3D *p_camera)
                 editor_reflect_camera->set_fov(editor_camera->get_fov());
             }
         }
+        run_editor_setup_init();
+        update_viewport();
+        update_reflection_camera();
     }
 }
 

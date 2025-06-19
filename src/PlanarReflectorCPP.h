@@ -34,6 +34,7 @@ namespace godot {
         Camera3D *editor_reflect_camera = nullptr;
         SubViewport *editor_reflect_viewport = nullptr;
         Object* editor_helper = nullptr;
+        bool is_editor_setup_finished = false;
 
         // Core Active reflection components (pointers to either game or editor components)
         Camera3D *active_main_camera = nullptr;
@@ -83,7 +84,9 @@ namespace godot {
         Vector3 last_offset_rotation = Vector3();
 
         // Internal helper methods
+        void clean_viewports();
         void run_game_setup_init();
+        Camera3D* get_active_camera();
         void run_editor_setup_init();
         void find_editor_helper();
         void setup_reflection_viewport();
