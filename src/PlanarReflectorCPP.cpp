@@ -76,7 +76,6 @@ void PlanarReflectorCPP::_ready()
 
 void PlanarReflectorCPP::clean_viewports()
 {
-
    game_reflect_viewport = nullptr;
    editor_reflect_viewport = nullptr;
    active_reflect_viewport = nullptr;
