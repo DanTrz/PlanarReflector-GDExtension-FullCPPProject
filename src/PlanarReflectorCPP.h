@@ -10,11 +10,19 @@
 #include <godot_cpp/classes/engine.hpp>
 #include <godot_cpp/classes/viewport_texture.hpp>
 #include <godot_cpp/classes/camera_attributes.hpp>
+#include <godot_cpp/classes/compositor.hpp>
+#include <godot_cpp/classes/compositor_effect.hpp>
 #include <godot_cpp/variant/transform3d.hpp>
 #include <godot_cpp/variant/vector3.hpp>
 #include <godot_cpp/variant/vector2i.hpp>
 #include <godot_cpp/variant/plane.hpp>
 #include <godot_cpp/variant/basis.hpp>
+#include <godot_cpp/variant/dictionary.hpp>
+
+// Forward declaration for our C++ ReflectionEffectPrePass
+namespace godot {
+    class ReflectionEffectPrePass;
+}
 
 namespace godot {
 
@@ -52,6 +60,14 @@ namespace godot {
         bool use_custom_environment = true;
         Environment *custom_environment = nullptr;
 
+        // Reflection Compositor Effects - NEW C++ INTEGRATION
+        bool use_custom_compositor = false;
+        Compositor *custom_compositor = nullptr;
+        bool hide_intersect_reflections = true;
+        bool override_YAxis_height = false;
+        double new_YAxis_height = 0.0;
+        bool fill_reflection_experimental = false;
+
         // Reflection Offset Controls
         bool enable_reflection_offset = false;
         Vector3 reflection_offset_position = Vector3(0.0, 0.0, 0.0);
@@ -66,7 +82,7 @@ namespace godot {
         double lod_distance_far = 30.0;
         double lod_resolution_multiplier = 0.45;
 
-        // Internal optimization variables
+        // Internal optimization variables - ENHANCED FROM GDSCRIPT
         ShaderMaterial *active_shader_material = nullptr;
         int frame_counter = 0;
         Vector3 last_camera_position = Vector3();
@@ -83,6 +99,29 @@ namespace godot {
         Vector3 last_offset_position = Vector3();
         Vector3 last_offset_rotation = Vector3();
 
+        // PERFORMANCE IMPROVEMENTS FROM GDSCRIPT
+        // Enhanced material caching with proper invalidation
+        bool material_cache_valid = false;
+        
+        // Batch shader parameter updates with change detection
+        Dictionary cached_shader_params;
+        Ref<Texture2D> last_reflection_texture;
+        
+        // Optimized viewport size checking
+        Vector2i cached_viewport_size = Vector2i(0, 0);
+        int last_viewport_check_frame = -1;
+        int viewport_check_frequency = 5;
+        
+        // Enhanced compositor effect lifecycle management
+        bool compositor_effect_initialized = false;
+        Dictionary last_compositor_settings;
+        
+        // Cached reflection plane calculations
+        Transform3D last_global_transform = Transform3D();
+        bool reflection_plane_cache_valid = false;
+        double last_distance_check = -1.0;
+        double cached_lod_factor = 1.0;
+
         // Internal helper methods
         void clean_viewports();
         void run_game_setup_init();
@@ -93,6 +132,15 @@ namespace godot {
         void setup_reflection_camera();
         void setup_reflection_layers();
         void setup_reflection_environment();
+        
+        // ENHANCED COMPOSITOR METHODS - NEW C++ INTEGRATION
+        void setup_compositor_reflection_effect(Camera3D *reflect_cam);
+        void create_new_compositor_effect(Camera3D *reflect_cam);
+        ReflectionEffectPrePass* set_reflection_effect(CompositorEffect *comp_effect);
+        void clear_compositor_reflection_effect(Camera3D *reflect_cam);
+        CompositorEffect* get_reflection_effect(Compositor *comp);
+        bool compositor_settings_equal(const Dictionary &a, const Dictionary &b);
+        
         Plane calculate_reflection_plane();
         void update_reflection_camera();
         void update_camera_projection();
@@ -101,6 +149,15 @@ namespace godot {
         Transform3D apply_reflection_offset(const Transform3D &base_transform);
         void update_offset_cache();
         bool should_update_reflection();
+        
+        // PERFORMANCE HELPER METHODS FROM GDSCRIPT
+        bool is_material_cache_valid();
+        void refresh_material_cache();
+        ShaderMaterial* get_cached_material();
+        bool values_equal(Variant a, Variant b);
+        Vector2i get_target_viewport_size();
+        Vector2i apply_lod_to_size(Vector2i target_size, Camera3D *active_cam);
+        void invalidate_all_caches();
 
     protected:
         static void _bind_methods(); //This allows to bind methods to the Godot System
@@ -114,6 +171,7 @@ namespace godot {
         void _process(double delta) override; 
         void _ready() override;
         void _exit_tree() override;
+        void _notification(int what);
         
         bool is_active = true;
         Viewport* get_active_viewport();
@@ -151,6 +209,25 @@ namespace godot {
 
         void set_custom_environment(Environment *p_environment);
         Environment *get_custom_environment() const;
+
+        // Reflection Compositor Effects Group - NEW C++ INTEGRATION
+        void set_use_custom_compositor(bool p_use_custom);
+        bool get_use_custom_compositor() const;
+
+        void set_custom_compositor(Compositor *p_compositor);
+        Compositor *get_custom_compositor() const;
+
+        void set_hide_intersect_reflections(bool p_hide);
+        bool get_hide_intersect_reflections() const;
+
+        void set_override_YAxis_height(bool p_override);
+        bool get_override_YAxis_height() const;
+
+        void set_new_YAxis_height(double p_height);
+        double get_new_YAxis_height() const;
+
+        void set_fill_reflection_experimental(bool p_fill);
+        bool get_fill_reflection_experimental() const;
 
         // Reflection Offset Control Group
         void set_enable_reflection_offset(bool p_enable);
