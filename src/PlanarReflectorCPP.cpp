@@ -180,8 +180,6 @@ Viewport* PlanarReflectorCPP::get_active_viewport() {
 }
 #pragma endregion
 
-
-
 void PlanarReflectorCPP::_process(double delta) 
 {
     if (Engine::get_singleton()->is_editor_hint() && !is_editor_setup_finished) return;
@@ -315,7 +313,7 @@ void PlanarReflectorCPP::update_reflection_camera()
     // Update camera projection based on main camera
     update_camera_projection();
 
-    // Calculate reflection plane (with advanced features)
+    // Calculate reflection plane 
     Plane reflection_plane = calculate_reflection_plane();
     cached_reflection_plane = reflection_plane;
     
@@ -378,12 +376,16 @@ void PlanarReflectorCPP::update_viewport()
     Vector2i target_size;
     
     // Get the correct viewport size
-    if (Engine::get_singleton()->is_editor_hint() && editor_helper) {
+    if (Engine::get_singleton()->is_editor_hint() && editor_helper) 
+    {
+        
         // Try to get editor viewport size from helper
         Variant size_var = editor_helper->call("get_editor_viewport_size");
         if (size_var.get_type() == Variant::VECTOR2I) {
             target_size = size_var;
-        } else {
+        } 
+        else 
+        {
             // Fallback to active camera's viewport
             Viewport* vp = get_active_viewport();
             if (vp) {
@@ -392,13 +394,16 @@ void PlanarReflectorCPP::update_viewport()
                 target_size = Vector2i(1920, 1080); // Default fallback
             }
         }
-    } else {
+    } 
+    else 
+    {
         // Game mode - use regular viewport
         target_size = get_viewport()->get_visible_rect().size;
     }
     
     // Apply LOD based on distance
-    if (use_lod && active_main_camera) {
+    if (use_lod && active_main_camera) 
+    {
         double distance = get_global_transform().get_origin().distance_to(active_main_camera->get_global_transform().get_origin());
         double lod_factor = 1.0;
         
@@ -707,17 +712,21 @@ void PlanarReflectorCPP::set_game_main_camera(Camera3D *p_camera)
 
 Camera3D* PlanarReflectorCPP::get_game_main_camera() const { return game_main_camera; }
 
-//method called by the plugin to set the editor camera in the PlanarReflector node
+//IMPORTANT => method called by the plugin to set the editor camera in the PlanarReflector node
+//Step 1 => Plugin tracks "GUI Viewport changes" See plugin's => func _forward_3d_gui_input
+//Step 2 => Plugin runs => func update_editor_camera_new(viewport_camera: Camera3D): => That call all nodes in the group "planar_reflectors" to set the editor camera
+// Step 3 => This method is called to set the editor camera for every active PlanarReflector node
 void PlanarReflectorCPP::set_editor_camera(Camera3D *p_camera) 
 {
-    editor_camera = Object::cast_to<Camera3D>(p_camera);
+    editor_camera = Object::cast_to<Camera3D>(p_camera); //IMPORTANT => method called by the plugin TO SET THE EDITOR CAMERA
     
     if (Engine::get_singleton()->is_editor_hint() && editor_camera) {
         // Update active camera pointer
         active_main_camera = editor_camera;
         
         // Update editor reflection camera properties if it exists
-        if (editor_reflect_camera) {
+        if (editor_reflect_camera) 
+        {
             editor_reflect_camera->set_projection(editor_camera->get_projection());
             if (editor_reflect_camera->get_projection() == Camera3D::PROJECTION_ORTHOGONAL) {
                 editor_reflect_camera->set_size(editor_camera->get_size() * ortho_scale_multiplier);
@@ -725,6 +734,8 @@ void PlanarReflectorCPP::set_editor_camera(Camera3D *p_camera)
                 editor_reflect_camera->set_fov(editor_camera->get_fov());
             }
         }
+        //Every time the editor camera is set, we need to run the editor setup init to update the viewport and camera
+        // This is to ensure the editor camera is properly initialized and linked
         run_editor_setup_init();
         update_viewport();
         update_reflection_camera();
