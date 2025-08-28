@@ -1,6 +1,7 @@
-#include "PlanarReflectorCPP.h" //Must have reference to our header .h file
-#include "ReflectionEffectPrePass.h" // Include our C++ ReflectionEffectPrePass
-//Must have include Godot base classes and can add more references as needed
+//PlanarReflectorCPP2.cpp FILE - SIMPLIFIED VIEWPORT MANAGEMENT
+#include "PlanarReflectorCPP.h"
+
+// Godot includes
 #include <godot_cpp/core/class_db.hpp> 
 #include <godot_cpp/godot.hpp> 
 #include <godot_cpp/variant/utility_functions.hpp> 
@@ -16,26 +17,28 @@
 #include <godot_cpp/classes/viewport_texture.hpp>
 #include <godot_cpp/classes/camera_attributes.hpp>
 #include <godot_cpp/classes/compositor.hpp>
+#include <godot_cpp/classes/compositor_effect.hpp>
+#include <godot_cpp/classes/script.hpp>
+#include <godot_cpp/classes/resource_loader.hpp>
+#include <godot_cpp/variant/typed_array.hpp>
 #include <godot_cpp/core/math.hpp>
 
 using namespace godot;
 
-//Define your constructor (Must have)
 PlanarReflectorCPP::PlanarReflectorCPP() 
 {  
-    // Initialize default values
-    is_editor_setup_finished = false;
+    UtilityFunctions::print("[PlanarReflectorCPP2] Constructor Started");
+
+    // Initialize with safe defaults
     is_active = true;
     reflection_camera_resolution = Vector2i(1920, 1080);
     ortho_scale_multiplier = 1.0;
     ortho_uv_scale = 1.0;
     auto_detect_camera_mode = true;
     reflection_layers = 1;
-    use_custom_environment = true;
+    use_custom_environment = false;
     
-    // NEW: Compositor Effects initialization
-    use_custom_compositor = false;
-    custom_compositor = nullptr;
+    // Compositor Effects initialization
     hide_intersect_reflections = true;
     override_YAxis_height = false;
     new_YAxis_height = 0.0;
@@ -46,10 +49,11 @@ PlanarReflectorCPP::PlanarReflectorCPP()
     reflection_offset_rotation = Vector3(0.0, 0.0, 0.0);
     reflection_offset_scale = 1.0;
     offset_blend_mode = 0;
-    update_frequency = 1;
+    
+    update_frequency = 2;
     use_lod = false;
-    lod_distance_near = 24.0;
-    lod_distance_far = 32.0;
+    lod_distance_near = 10.0;
+    lod_distance_far = 25.0;
     lod_resolution_multiplier = 0.45;
     
     // Initialize internal variables
@@ -58,509 +62,312 @@ PlanarReflectorCPP::PlanarReflectorCPP()
     rotation_threshold = 0.001;
     is_layer_one_active = true;
     
-    // ENHANCED: Performance optimization initialization
+    // Initialize performance caches
     material_cache_valid = false;
+    cached_material_pointer = nullptr;
     last_viewport_check_frame = -1;
     viewport_check_frequency = 5;
-    compositor_effect_initialized = false;
     reflection_plane_cache_valid = false;
     last_distance_check = -1.0;
     cached_lod_factor = 1.0;
 }
 
-//Define your destructor (Must have)
 PlanarReflectorCPP::~PlanarReflectorCPP() 
 {
-    // Cleanup is handled by Godot's garbage collection for our node references
+    // Cleanup handled by _exit_tree
+    UtilityFunctions::print("[PlanarReflectorCPP2] DEStructor Started");
+
 }
 
 void PlanarReflectorCPP::_ready() 
 {
-    // Add to group for easy access from editor plugin
+    UtilityFunctions::print("[PlanarReflectorCPP2] Ready Started");
     add_to_group("planar_reflectors");
-    // UtilityFunctions::print("[PlanarReflectorCPP]  _ready called, cleaning up viewports");
-    clean_viewports();
-    
-    if (Engine::get_singleton()->is_editor_hint())
-    {
-        call_deferred("run_editor_setup_init");
-    }
-    else
-    {
-        call_deferred("run_game_setup_init");
-    }
+    clear_shader_texture_references();
+    call_deferred("initial_setup");
 }
 
 void PlanarReflectorCPP::_notification(int what)
 {
     if (what == NOTIFICATION_TRANSFORM_CHANGED) {
-        // ENHANCED: Invalidate reflection plane cache when transform changes
         reflection_plane_cache_valid = false;
-        if (active_reflect_camera && active_reflect_camera->get_compositor().is_valid()) 
+        if (reflect_camera && reflect_camera->get_compositor().is_valid()) 
         {
-            Ref<Compositor> compositor = active_reflect_camera->get_compositor();
-            CompositorEffect *effect = get_reflection_effect(compositor.ptr());
-            if (effect) {
-                set_reflection_effect(effect);
-            }
+            //TODO: IMPLEMENT THIS BACK IN A NEW WAY # DEBUG
+            // Ref<Compositor> compositor = reflect_camera->get_compositor();
+            // CompositorEffect *effect = get_reflection_effect(compositor.ptr());
+            // if (effect) {
+            //     set_reflection_effect(effect);
+            // }
         }
     }
 }
 
-void PlanarReflectorCPP::clean_viewports()
+void PlanarReflectorCPP::initial_setup()
 {
-    // UtilityFunctions::print("[PlanarReflectorCPP]  Trying to clear Viewport/Cameras");
-    game_reflect_viewport = nullptr;
-    editor_reflect_viewport = nullptr;
-    active_reflect_viewport = nullptr;
-}
+    UtilityFunctions::print("[PlanarReflectorCPP2] Initial Setup started");
 
-void PlanarReflectorCPP::run_editor_setup_init()
-{
-    is_editor_setup_finished = false;
-    // Find the editor helper first
-    find_editor_helper();
-
-    // Clean up previous editor viewport/camera if they exist
-    if (editor_reflect_camera && Object::cast_to<Node>(editor_reflect_camera)) {
-        // Clear compositor before freeing camera
-        // UtilityFunctions::print("[PlanarReflectorCPP] Trying to free editor_reflect_camera");
-
-        if (editor_reflect_camera->get_compositor().is_valid()) {
-            editor_reflect_camera->set_compositor(Ref<Compositor>());
-        }
-        if (editor_reflect_camera->is_inside_tree() && editor_reflect_camera->get_parent()) {
-            editor_reflect_camera->get_parent()->remove_child(editor_reflect_camera);
-        }
-        if (editor_reflect_camera->is_inside_tree()) {
-            editor_reflect_camera->call_deferred("queue_free");
-        }
-        editor_reflect_camera = nullptr;
-        // UtilityFunctions::print("[PlanarReflectorCPP] Freed previous editor_reflect_camera");
-    }
-    if (editor_reflect_viewport && Object::cast_to<Node>(editor_reflect_viewport)) {
-
-            // UtilityFunctions::print("[PlanarReflectorCPP] Trying to free editor_reflect_viewport");
-        if (editor_reflect_viewport->is_inside_tree() && editor_reflect_viewport->get_parent()) {
-            editor_reflect_viewport->get_parent()->remove_child(editor_reflect_viewport);
-        }
-        if (editor_reflect_viewport->is_inside_tree()) {
-            editor_reflect_viewport->call_deferred("queue_free");
-        }
-        editor_reflect_viewport = nullptr;
-        // UtilityFunctions::print("[PlanarReflectorCPP] Freed previous editor_reflect_viewport");
+    if (Engine::get_singleton()->is_editor_hint()) {
+        find_editor_helper();
     }
 
-    // Create editor-specific viewport and camera
-    editor_reflect_viewport = memnew(SubViewport);
-    editor_reflect_viewport->set_name("EditorReflectViewport");
-    add_child(editor_reflect_viewport);
-    // UtilityFunctions::print("[PlanarReflectorCPP] Created editor_reflect_viewport");
-
-    editor_reflect_viewport->set_size(reflection_camera_resolution);
-    editor_reflect_viewport->set_update_mode(SubViewport::UPDATE_ALWAYS);
-    editor_reflect_viewport->set_msaa_3d(Viewport::MSAA_DISABLED);
-    editor_reflect_viewport->set_positional_shadow_atlas_size(2048);
-    editor_reflect_viewport->set_use_own_world_3d(false);
-    editor_reflect_viewport->set_transparent_background(true);
-    editor_reflect_viewport->set_handle_input_locally(false);
-
-    // Create editor reflection camera
-    editor_reflect_camera = memnew(Camera3D);
-    editor_reflect_viewport->add_child(editor_reflect_camera);
-    // UtilityFunctions::print("[PlanarReflectorCPP] Created editor_reflect_camera");
-    editor_reflect_camera->set_cull_mask(reflection_layers);
-    editor_reflect_camera->set_current(true);
-    
-    // Set up a stable environment for editor
-    Ref<Environment> editor_env;
-    editor_env.instantiate();
-    editor_env->set_background(Environment::BG_CLEAR_COLOR);
-    editor_env->set_ambient_source(Environment::AMBIENT_SOURCE_COLOR);
-    editor_env->set_ambient_light_color(Color(0.8, 0.8, 0.8));
-    editor_env->set_ambient_light_energy(1.2);
-    editor_reflect_camera->set_environment(editor_env);
-    
-    // Set active pointers to editor components
-    active_main_camera = editor_camera; // May be null initially, will be set by plugin
-    active_reflect_camera = editor_reflect_camera;
-    active_reflect_viewport = editor_reflect_viewport;
-
-    // Initialize offset cache
-    update_offset_cache();
-    
-    // ENHANCED: Initialize performance caches
-    invalidate_all_caches();
-
-    is_editor_setup_finished = true;
-    
-    if(active_reflect_camera != nullptr)
-    {
-        setup_compositor_reflection_effect(active_reflect_camera);
-    }
-    
-    // UtilityFunctions::print("PlanarReflectorCPP editor ready completed");
-}
-
-void PlanarReflectorCPP::run_game_setup_init()
-{
-    // For game, use the assigned main camera
-    if (!game_main_camera) {
-        // UtilityFunctions::print("Warning: No main camera assigned for PlanarReflectorCPP");
+    // CRITICAL FIX: Ensure we're in tree before viewport creation
+    if (!is_inside_tree()) {
+        call_deferred("initial_setup");
         return;
     }
-    
-    // Set active pointers to game components
-    active_main_camera = game_main_camera;
-    active_reflect_camera = game_reflect_camera;
-    active_reflect_viewport = game_reflect_viewport;
 
-    // Setup for the Running Game
-    setup_reflection_viewport();
-    setup_reflection_camera();
-    setup_reflection_layers();
-    setup_reflection_environment();
-    
-    // Initialize offset cache
+    setup_reflection_camera_and_viewport();
     update_offset_cache();
-    
-    // ENHANCED: Initialize performance caches
     invalidate_all_caches();
     
-    // UtilityFunctions::print("PlanarReflectorCPP game ready completed");
+    // CRITICAL FIX: Defer these until viewport is ready
+    call_deferred("finalize_setup");
 }
 
-#pragma region // Editor Functions
-void PlanarReflectorCPP::find_editor_helper() {
-    if (!Engine::get_singleton()->is_editor_hint()) {
-        return;
-    }
-    
-    // Try to find the editor helper singleton
-    if (Engine::get_singleton()->has_singleton("PlanarReflectorEditorHelper")) {
-        editor_helper = Engine::get_singleton()->get_singleton("PlanarReflectorEditorHelper");
-        if (editor_helper) {
-            // UtilityFunctions::print("PlanarReflectorCPP: Found editor helper");
-        }
-    }
-
-    if(active_reflect_camera != nullptr)
-    {
-        setup_compositor_reflection_effect(active_reflect_camera);
-    }
-    
+void PlanarReflectorCPP::finalize_setup()
+{
+    update_reflect_viewport_size();
+    set_reflection_camera_transform();
+    UtilityFunctions::print("[PlanarReflectorCPP2] Initial Setup Completed");
 }
-
-Camera3D* PlanarReflectorCPP::get_active_camera() {
-    return active_main_camera;
-}
-
-Viewport* PlanarReflectorCPP::get_active_viewport() {
-    if (Engine::get_singleton()->is_editor_hint() && active_main_camera) {
-        return active_main_camera->get_viewport();
-    }
-    return get_viewport();
-}
-#pragma endregion
 
 void PlanarReflectorCPP::_process(double delta) 
 {
-    if (Engine::get_singleton()->is_editor_hint() && !is_editor_setup_finished) return;
-
-    if (!is_active) return;
-
-    // Check if we have valid active components
-    if (!active_main_camera || !active_reflect_camera || !active_reflect_viewport) {
+    //  if (Engine::get_singleton()->is_editor_hint() == false) {
+    //      return;
+    //  }
+    
+    if (!is_inside_tree() || !is_active) {
         return;
     }
-
-    frame_counter++;
     
-    // Update offset cache if needed
+    frame_counter++;
     update_offset_cache();
     
-    // ENHANCED: Less frequent viewport size updates with safety
+    // Less frequent viewport size updates 
     if (viewport_check_frequency > 0 && frame_counter % viewport_check_frequency == 0) {
-        update_viewport();
+        update_reflect_viewport_size();
     }
     
-    // Skip updates based on frequency
-    bool should_update = (frame_counter % update_frequency == 0);
-    
+    bool should_update = (update_frequency > 0 && frame_counter % update_frequency == 0);
     if (should_update) {
-        if (should_update_reflection()) {
-            update_viewport();
-            update_reflection_camera();
+        Camera3D *active_cam = get_active_camera();
+        if (active_cam && should_update_reflection(active_cam)) {
+            set_reflection_camera_transform();
         }
     }
 }
 
-void PlanarReflectorCPP::setup_reflection_viewport()
+void PlanarReflectorCPP::setup_reflection_camera_and_viewport()
 {
-    // This is called for game mode only
-    // Clean up previous game viewport if it exists
-    if (game_reflect_viewport && Object::cast_to<Node>(game_reflect_viewport)) {
-        if (game_reflect_viewport->is_inside_tree() && game_reflect_viewport->get_parent()) {
-            game_reflect_viewport->get_parent()->remove_child(game_reflect_viewport);
+    UtilityFunctions::print("[PlanarReflectorCPP2] setup_reflection_camera_and_viewport called");
+
+    // CRITICAL FIX: Clear shader references BEFORE destroying viewport
+    clear_shader_texture_references();
+    
+    // Safe cleanup of existing viewport
+    if (reflect_viewport) {
+        if (reflect_viewport->is_inside_tree()) {
+            reflect_viewport->get_parent()->remove_child(reflect_viewport);
         }
-        if (game_reflect_viewport->is_inside_tree()) {
-            game_reflect_viewport->call_deferred("queue_free");
-        }
-        game_reflect_viewport = nullptr;
-        // UtilityFunctions::print("[PlanarReflectorCPP] Freed previous game_reflect_viewport");
+        reflect_viewport->queue_free();
+        reflect_viewport = nullptr;
+    }
+    
+    if (reflect_camera) {
+        reflect_camera = nullptr; // Will be freed with viewport
     }
 
-    // Create new game viewport
-    game_reflect_viewport = memnew(SubViewport);
-    game_reflect_viewport->set_name("GameReflectViewport");
-    add_child(game_reflect_viewport);
-    // UtilityFunctions::print("[PlanarReflectorCPP] Created game_reflect_viewport");
-
-    game_reflect_viewport->set_size(reflection_camera_resolution);
-    game_reflect_viewport->set_update_mode(SubViewport::UPDATE_ALWAYS);
-    game_reflect_viewport->set_msaa_3d(Viewport::MSAA_DISABLED);
-    game_reflect_viewport->set_positional_shadow_atlas_size(2048);
-    game_reflect_viewport->set_use_own_world_3d(false);
-    game_reflect_viewport->set_transparent_background(true);
-    game_reflect_viewport->set_handle_input_locally(false);
-
-    // Update active pointer
-    active_reflect_viewport = game_reflect_viewport;
-}
-
-void PlanarReflectorCPP::setup_reflection_camera()
-{
-    if (!active_reflect_viewport) {
-        return;
-    }
-
-    // Clean up previous game camera if it exists
-    if (game_reflect_camera && Object::cast_to<Node>(game_reflect_camera)) {
-        // Clear compositor before freeing camera
-        if (game_reflect_camera->get_compositor().is_valid()) {
-            game_reflect_camera->set_compositor(Ref<Compositor>());
-        }
-        if (game_reflect_camera->is_inside_tree() && game_reflect_camera->get_parent()) {
-            game_reflect_camera->get_parent()->remove_child(game_reflect_camera);
-        }
-        if (game_reflect_camera->is_inside_tree()) {
-            game_reflect_camera->call_deferred("queue_free");
-        }
-        game_reflect_camera = nullptr;
-        // UtilityFunctions::print("[PlanarReflectorCPP] Freed previous game_reflect_camera");
-    }
-
-    // Create new game reflection camera
-    game_reflect_camera = memnew(Camera3D);
-    active_reflect_viewport->add_child(game_reflect_camera);
-    // UtilityFunctions::print("[PlanarReflectorCPP] Created game_reflect_camera");
-
-    if (game_main_camera) {
-        // Copy basic camera properties from main camera
-        game_reflect_camera->set_attributes(game_main_camera->get_attributes());
-        game_reflect_camera->set_doppler_tracking(game_main_camera->get_doppler_tracking());
-    }
-
-    game_reflect_camera->set_current(true);
-
-    // Update active pointer
-    active_reflect_camera = game_reflect_camera;
-}
-
-void PlanarReflectorCPP::setup_reflection_layers()
-{
-    if (!active_reflect_camera) {
+    // CRITICAL FIX: Wait one frame before creating new viewport
+    if (frame_counter > 0) {
+        call_deferred("create_viewport_deferred");
         return;
     }
     
-    // Configure which layers the reflection camera can see
-    active_reflect_camera->set_cull_mask(reflection_layers);
+    create_viewport_deferred();
+}
+
+void PlanarReflectorCPP::create_viewport_deferred()
+{
+    // Create new viewport with unique name to avoid path conflicts
+    reflect_viewport = memnew(SubViewport);
+    String unique_name = "ReflectionViewPort_" + String::num_int64(reinterpret_cast<uint64_t>(this));
+    reflect_viewport->set_name(unique_name);
     
-    // Check if layer 1 is active (bit 0 = layer 1)
-    if (reflection_layers & (1 << 0)) {
-        is_layer_one_active = true;
-    } else {
-        is_layer_one_active = false;
-        UtilityFunctions::print("[PlanarReflectorCPP] Layer 1 not active, make sure to add the layers to the scene Lights cull masks");
+    add_child(reflect_viewport);
+    
+    // CRITICAL FIX: Set viewport properties before adding camera
+    reflect_viewport->set_size(reflection_camera_resolution);
+    reflect_viewport->set_update_mode(SubViewport::UPDATE_ALWAYS);
+    reflect_viewport->set_msaa_3d(Viewport::MSAA_DISABLED);
+    reflect_viewport->set_positional_shadow_atlas_size(2048);
+    reflect_viewport->set_use_own_world_3d(false);
+    reflect_viewport->set_transparent_background(true);
+    reflect_viewport->set_handle_input_locally(false);
+
+    // Create camera
+    reflect_camera = memnew(Camera3D);
+    reflect_camera->set_name("ReflectCamera");
+    reflect_viewport->add_child(reflect_camera);
+    
+    int cull_mask = reflection_layers;
+    reflect_camera->set_cull_mask(cull_mask);
+    is_layer_one_active = bool(cull_mask & (1 << 0));
+    
+    if (main_camera) {
+        reflect_camera->set_attributes(main_camera->get_attributes());
+        reflect_camera->set_doppler_tracking(main_camera->get_doppler_tracking());
+    }
+    
+    reflect_camera->set_current(true);
+    setup_reflection_environment();
+    
+    if (reflect_camera) {
+        call_deferred("setup_compositor_reflection_effect", reflect_camera);
     }
 }
+
+// CRITICAL: Add this new method
+
 
 void PlanarReflectorCPP::setup_reflection_environment()
 {
-    if (!active_reflect_camera) {
+    if (!reflect_camera) {
         return;
     }
     
-    // Set up environment for reflection camera
-    if (use_custom_environment) {
-        if (custom_environment) {
-            active_reflect_camera->set_environment(custom_environment);
-        } else {
-            // Auto-generate clean environment
-            Ref<Environment> reflection_env;
-            reflection_env.instantiate();
-            reflection_env->set_background(Environment::BG_CLEAR_COLOR);
-            reflection_env->set_ambient_source(Environment::AMBIENT_SOURCE_COLOR);
-            reflection_env->set_ambient_light_color(Color(0.8, 0.8, 0.8));
-            reflection_env->set_ambient_light_energy(1.2);
-            reflection_env->set_fog_enabled(false);
-            
-            active_reflect_camera->set_environment(reflection_env);
-        }
-    } else if (active_main_camera) {
-        // Use main camera environment
-        active_reflect_camera->set_environment(active_main_camera->get_environment());
-    }
-}
-
-// NEW: C++ COMPOSITOR EFFECTS INTEGRATION
-void PlanarReflectorCPP::setup_compositor_reflection_effect(Camera3D *reflect_cam)
-{
-    //  UtilityFunctions::print(" [PlanarReflectorCPP] setup_compositor_reflection_effect called");
-    if (!reflect_cam) {
-        return;
-    }
-
-    if (use_custom_compositor && custom_compositor) {
-        reflect_cam->set_compositor(custom_compositor);
-        Ref<Compositor> compositor = reflect_cam->get_compositor();
-        if (compositor.is_valid()) {
-            TypedArray<CompositorEffect> effects = compositor->get_compositor_effects();
-            if (effects.size() > 0) {
-                CompositorEffect *active_effect = Object::cast_to<CompositorEffect>(effects[0]);
-                if (Object::cast_to<ReflectionEffectPrePass>(active_effect)) {
-                    set_reflection_effect(active_effect);
-                }
-            }
-        }
+    Ref<Environment> reflection_env;
+    if (use_custom_environment && custom_environment) {
+        reflection_env = Ref<Environment>(custom_environment);
     } else {
-        Ref<Compositor> current_compositor = reflect_cam->get_compositor();
-        if (!current_compositor.is_valid()) {
-            create_new_compositor_effect(reflect_cam);
-        } else {
-            TypedArray<CompositorEffect> effects = current_compositor->get_compositor_effects();
-            if (effects.size() > 0) {
-                CompositorEffect *active_effect = Object::cast_to<CompositorEffect>(effects[0]);
-                if (Object::cast_to<ReflectionEffectPrePass>(active_effect)) {
-                    set_reflection_effect(active_effect);
-                }
-            }
-        }
+        reflection_env.instantiate();
+        reflection_env->set_background(Environment::BG_CLEAR_COLOR);
+        reflection_env->set_ambient_source(Environment::AMBIENT_SOURCE_COLOR);
+        reflection_env->set_ambient_light_color(Color(0.8, 0.8, 0.8));
+        reflection_env->set_ambient_light_energy(1.0);
     }
-
+    
+    reflect_camera->set_environment(reflection_env);
 }
 
-void PlanarReflectorCPP::create_new_compositor_effect(Camera3D *reflect_cam)
+void PlanarReflectorCPP::find_editor_helper()
 {
-    //  UtilityFunctions::print(" [PlanarReflectorCPP] create_new_compositor_effect called");
+    UtilityFunctions::print("[PlanarReflectorCPP2] find_editor_helper called");
+
+    if (Engine::get_singleton()->is_editor_hint()) {
+        if (Engine::get_singleton()->has_singleton("PlanarReflectorEditorHelper")) {
+            editor_helper = Engine::get_singleton()->get_singleton("PlanarReflectorEditorHelper");
+        }
+    }
+}
+
+//TODO: //DEBUG - REMOVE ALL REFEFRENCES TO find_reflection_effect_class IN HEADER AND CPP FILES
+void PlanarReflectorCPP::find_reflection_effect_class()
+{
+    // if (Engine::get_singleton()->is_editor_hint()) {
+    //     if (Engine::get_singleton()->has_singleton("ReflectEffectPrePassGD")) {
+    //         reflect_effect_gdscript = Engine::get_singleton()->get_singleton("ReflectEffectPrePassGD");
+    //         UtilityFunctions::print("Found ReflectEffectPrePassGD class in editor");
+    //     }
+    //     else {
+    //         reflect_effect_gdscript = nullptr;
+    //         UtilityFunctions::print("NOT FOUND ReflectEffectPrePassGD class in editor");
+    //     }
+    // }
+}
+
+void PlanarReflectorCPP::setup_compositor_reflection_effect(Camera3D *reflect_cam) 
+{
+    UtilityFunctions::print("[PlanarReflectorCPP2] setup_compositor_reflection_effect - Called");
+
     if (!reflect_cam) {
         return;
     }
     
-    // Clear existing compositor first
-    Ref<Compositor> current_compositor = reflect_cam->get_compositor();
-    if (current_compositor.is_valid()) {
-        clear_compositor_reflection_effect(reflect_cam);
-    }
-    
-    // Create new compositor
-    Ref<Compositor> compositor;
-    compositor.instantiate();
-    
-    // Create new ReflectionEffectPrePass
-    Ref<ReflectionEffectPrePass> prepass_effect;
-    prepass_effect.instantiate();
-    
-    // Configure the effect BEFORE adding to compositor
-    if (prepass_effect.is_valid()) {
-        double height = override_YAxis_height ? new_YAxis_height : get_global_transform().get_origin().y;
-        prepass_effect->set_intersect_height(height);
-        prepass_effect->set_effect_enabled(true);
-        prepass_effect->set_fill_enabled(fill_reflection_experimental);
-        
-        // Create effects array and add configured effect
-        TypedArray<ReflectionEffectPrePass> effects;
-        effects.push_back(prepass_effect);
-        
-        // Set effects to compositor
-        compositor->set_compositor_effects(effects);
-        
-        // Finally assign compositor to camera
-        reflect_cam->set_compositor(compositor);
-    }
-    
-    compositor_effect_initialized = true;
-}
-
-ReflectionEffectPrePass* PlanarReflectorCPP::set_reflection_effect(CompositorEffect *comp_effect)
-{
-    // UtilityFunctions::print(" [PlanarReflectorCPP] set_reflection_effect called");
-
-    ReflectionEffectPrePass *reflection_effect = Object::cast_to<ReflectionEffectPrePass>(comp_effect);
-    if (Object::cast_to<ReflectionEffectPrePass>(reflection_effect)) 
+    if(active_compositor.is_valid() && (reflect_cam->get_compositor() != active_compositor))
     {
-        double height = override_YAxis_height ? new_YAxis_height : get_global_transform().get_origin().y;
-        reflection_effect->set_intersect_height(height);
-        reflection_effect->set_effect_enabled(true);
-        reflection_effect->set_fill_enabled(fill_reflection_experimental);
-        return reflection_effect;
+        UtilityFunctions::print("[PlanarReflectorCPP2] CAM_COMP: Use Exported Active Compositor to set in Reflect Camera");
+        reflect_cam->set_compositor(active_compositor);
+        update_compositor_parameters();
+        return;
     }
 
-    // UtilityFunctions::print(" [PlanarReflectorCPP] set_reflection_effect trying to null cast");
-    return nullptr;
-}
+    //create_new_compositor();
+    //    // Case 2: Check if camera has an empty/default compositor
+    Ref<Compositor> current_comp = reflect_cam->get_compositor();
+    if (!current_comp.is_valid() || current_comp->get_compositor_effects().size() == 0) {
+        {
+            UtilityFunctions::print("[PlanarReflectorCPP2] CAM_COMP:Creating New Compositor");
+            active_compositor = create_new_compositor();
 
-void PlanarReflectorCPP::clear_compositor_reflection_effect(Camera3D *reflect_cam)
-{
-    // UtilityFunctions::print("Called clear_compositor_reflection_effect");
-    Ref<Compositor> compositor = reflect_cam->get_compositor();
-    if (compositor.is_valid()) {
-        
-        // UtilityFunctions::print("CPP Trying to clear compositor effects via clear_compositor_reflection_effect");
-        TypedArray<CompositorEffect> active_effects = compositor->get_compositor_effects();
-        if(active_effects.size() > 0) {
-            active_effects.clear();
-            reflect_cam->set_compositor(Ref<Compositor>());
+            // active_compositor = compositor.ptr();
+            reflect_cam->set_compositor(active_compositor);
+            update_compositor_parameters();
+            return;
         }
-
-
-        
-
-    //     // TypedArray<CompositorEffect> empty_effects;
-    //     // compositor->set_compositor_effects(empty_effects);
-    //     // Ref<Compositor> null_compositor;
-    //     // reflect_cam->set_compositor(null_compositor);
     }
 }
 
-CompositorEffect* PlanarReflectorCPP::get_reflection_effect(Compositor *comp)
+Ref<Compositor> PlanarReflectorCPP::create_new_compositor() 
 {
-    if (!comp) {
-        return nullptr;
-        // UtilityFunctions::print(" [PlanarReflectorCPP] get_reflection_effect = null 1");
+        UtilityFunctions::print("[PlanarReflectorCPP2] CAM_COMP: create_new_compositor CALLED");
 
-    }
+    Variant loaded_resource = ResourceLoader::get_singleton()->load("res://addons/PlanarReflectorCpp/SupportFiles/reflection_compositor.tres");
     
-    TypedArray<CompositorEffect> effects = comp->get_compositor_effects();
-    for (int i = 0; i < effects.size(); i++) {
-        CompositorEffect *effect = Object::cast_to<CompositorEffect>(effects[i]);
-        if (Object::cast_to<ReflectionEffectPrePass>(effect)) {
-            return effect;
+    if (loaded_resource.get_type() == Variant::OBJECT) 
+    {
+        UtilityFunctions::print("[PlanarReflectorCPP2] CAM_COMP: Loaded Resource is an Object");
+        
+        // CRITICAL: Create a unique copy using duplicate(true) for deep copy
+        Ref<Resource> resource_ref = loaded_resource;
+        if (resource_ref.is_valid()) 
+        {
+            Ref<Resource> unique_copy = resource_ref->duplicate(true); // Deep copy
+            Ref<Compositor> compositor = Object::cast_to<Compositor>(unique_copy.ptr());
+            
+            UtilityFunctions::print("[PlanarReflectorCPP2] CAM_COMP: Return new Compositor - Copy from Resources");
+            return compositor;
+    
         }
-    }
-    // UtilityFunctions::print(" [PlanarReflectorCPP] get_reflection_effect = null 2");
-    return nullptr;
+    } 
+
+    UtilityFunctions::print("[PlanarReflectorCPP2] CAM_COMP: Return new EMPTY Compositor");
+    return Ref<Compositor>();
 }
 
+void PlanarReflectorCPP::update_compositor_parameters()
+{
+    UtilityFunctions::print("[PlanarReflectorCPP2] update_compositor_parameters- Called");
+
+
+    if (!active_compositor.is_valid()) return;
+    
+    TypedArray<CompositorEffect> effects = active_compositor->get_compositor_effects();
+    if (effects.size() > 0) {
+        CompositorEffect* effect = Object::cast_to<CompositorEffect>(effects[0]);
+        if (effect) {
+            double height = override_YAxis_height ? new_YAxis_height : get_global_transform().get_origin().y;
+            effect->set("effect_enabled", hide_intersect_reflections);
+            effect->set("fill_enabled", fill_reflection_experimental);
+            if(override_YAxis_height) effect->set("intersect_height", new_YAxis_height);
+            UtilityFunctions::print("[PlanarReflectorCPP2] Updated Compositor Effect");
+        }
+    }
+}
+
+// Reflection Calculation Methods
 Plane PlanarReflectorCPP::calculate_reflection_plane()
 {
-    // ENHANCED: Cache reflection plane calculations when transform unchanged
+    if (!is_inside_tree()) {
+        return Plane();
+    }
+        
     Transform3D current_transform = get_global_transform();
     if (reflection_plane_cache_valid && current_transform.is_equal_approx(last_global_transform)) {
         return cached_reflection_plane;
     }
     
-    // Calculate the reflection plane with optional offset and perturbation
     Transform3D reflection_transform = current_transform * Transform3D().rotated(Vector3(1, 0, 0), Math_PI / 2.0);
     Vector3 plane_origin = reflection_transform.get_origin();
     Vector3 plane_normal = reflection_transform.get_basis().get_column(2).normalized();
@@ -572,116 +379,116 @@ Plane PlanarReflectorCPP::calculate_reflection_plane()
     return cached_reflection_plane;
 }
 
-void PlanarReflectorCPP::update_reflection_camera()
+void PlanarReflectorCPP::set_reflection_camera_transform()
 {
-    if (!active_main_camera || !active_reflect_camera) {
+    if (!is_inside_tree()) {
         return;
     }
-
-    // Update camera projection based on main camera
+        
+    Camera3D *active_camera = get_active_camera();
+    if (!active_camera || !reflect_camera) {
+        return;
+    }
+        
     update_camera_projection();
-
-    // Calculate reflection plane 
     Plane reflection_plane = calculate_reflection_plane();
-    cached_reflection_plane = reflection_plane;
     
-    Vector3 cam_pos = active_main_camera->get_global_transform().get_origin();
-    
+    Vector3 cam_pos = active_camera->get_global_transform().get_origin();
     Vector3 proj_pos = reflection_plane.project(cam_pos);
     Vector3 mirrored_pos = cam_pos + (proj_pos - cam_pos) * 2.0;
     
-    // Create base reflection transform
     Transform3D base_reflection_transform;
     base_reflection_transform.set_origin(mirrored_pos);
     
-    Basis main_basis = active_main_camera->get_global_transform().get_basis();
-    Vector3 normal = reflection_plane.get_normal();
+    Basis main_basis = active_camera->get_global_transform().get_basis();
+    Vector3 n = reflection_plane.get_normal();
     
     Basis reflection_basis;
-    reflection_basis.set_column(0, main_basis.get_column(0).normalized().bounce(normal).normalized());
-    reflection_basis.set_column(1, main_basis.get_column(1).normalized().bounce(normal).normalized());
-    reflection_basis.set_column(2, main_basis.get_column(2).normalized().bounce(normal).normalized());
+    reflection_basis.set_column(0, main_basis.get_column(0).normalized().bounce(n).normalized());
+    reflection_basis.set_column(1, main_basis.get_column(1).normalized().bounce(n).normalized());
+    reflection_basis.set_column(2, main_basis.get_column(2).normalized().bounce(n).normalized());
     
     base_reflection_transform.set_basis(reflection_basis);
-    
-    // Apply reflection offset
     Transform3D final_reflection_transform = apply_reflection_offset(base_reflection_transform);
     
-    // Set the final transform
-    active_reflect_camera->set_global_transform(final_reflection_transform);
-    
-    // Pass parameters to shader
-    call_deferred("update_shader_parameters");
+    reflect_camera->set_global_transform(final_reflection_transform);
+    update_shader_parameters();
 }
 
 void PlanarReflectorCPP::update_camera_projection()
 {
-    if (!active_main_camera || !active_reflect_camera) {
+    Camera3D *active_cam = get_active_camera();
+    if (!active_cam || !reflect_camera) {
         return;
     }
-
+    
     if (auto_detect_camera_mode) {
-        active_reflect_camera->set_projection(active_main_camera->get_projection());
-        if (Engine::get_singleton()->is_editor_hint()) { // Force perspective in editor
-            active_reflect_camera->set_projection(Camera3D::PROJECTION_PERSPECTIVE);
-        }
+        reflect_camera->set_projection(active_cam->get_projection());
     }
     
-    if (active_reflect_camera->get_projection() == Camera3D::PROJECTION_ORTHOGONAL) {
-        active_reflect_camera->set_size(active_main_camera->get_size() * ortho_scale_multiplier);
+    if (reflect_camera->get_projection() == Camera3D::PROJECTION_ORTHOGONAL) {
+        reflect_camera->set_size(active_cam->get_size() * ortho_scale_multiplier);
     } else {
-        active_reflect_camera->set_fov(active_main_camera->get_fov());
+        reflect_camera->set_fov(active_cam->get_fov());
     }
 }
 
-void PlanarReflectorCPP::update_viewport()
+void PlanarReflectorCPP::update_reflect_viewport_size()
 {
-    if (!active_reflect_viewport) {
+    if (!reflect_viewport) {
         return;
     }
-
-    Vector2i target_size = get_target_viewport_size();
     
-    // Apply LOD based on distance
-    if (use_lod && active_main_camera) 
-    {
-        target_size = apply_lod_to_size(target_size, active_main_camera);
+    // Optimized viewport size checking frequency  
+    if (frame_counter - last_viewport_check_frame < viewport_check_frequency) {
+        return;
+    }
+    last_viewport_check_frame = frame_counter;
+    
+    Vector2i target_size = get_target_viewport_size();
+    Camera3D *active_cam = get_active_camera();
+    
+    if (use_lod && active_cam) {
+        target_size = apply_lod_to_size(target_size, active_cam);
     }
     
-    // ENHANCED: Only update if size actually changed
+    // Only update if size actually changed
     if (cached_viewport_size != target_size) {
-        active_reflect_viewport->set_size(target_size);
+        reflect_viewport->set_size(target_size);
         cached_viewport_size = target_size;
     }
 }
 
 void PlanarReflectorCPP::update_shader_parameters()
 {
-    if (!active_reflect_viewport) {
-        return;
-    }
-
-    // ENHANCED: Enhanced material caching with proper invalidation
     if (!is_material_cache_valid()) {
         refresh_material_cache();
     }
     
     ShaderMaterial *material = get_cached_material();
-    if (material == nullptr) {
-        // No material available - this is normal if no mesh/material assigned yet
+    if (!material || !reflect_viewport) {
         return;
     }
     
-    // ENHANCED: Batch shader parameter updates with change detection
-    Ref<Texture2D> reflection_texture = active_reflect_viewport->get_texture();
-    bool is_orthogonal = false;
-    if (Engine::get_singleton()->is_editor_hint()) {
-        is_orthogonal = (active_reflect_camera->get_projection() == Camera3D::PROJECTION_ORTHOGONAL);
-    } else if (active_main_camera) {
-        is_orthogonal = (active_main_camera->get_projection() == Camera3D::PROJECTION_ORTHOGONAL);
+    // MINIMAL FIX: Only access texture when viewport is stable
+    if (!reflect_viewport->is_inside_tree()) {
+        return;
     }
     
-    // Prepare all parameters in a dictionary for batch comparison
+    // MINIMAL FIX: Add small delay to ensure viewport is ready
+    if (frame_counter < 2) {
+        return;
+    }
+    
+    Ref<Texture2D> reflection_texture = reflect_viewport->get_texture();
+    bool is_orthogonal = false;
+    
+    Camera3D *active_cam = get_active_camera();
+    if (active_cam) {
+        is_orthogonal = (active_cam->get_projection() == Camera3D::PROJECTION_ORTHOGONAL);
+    }
+    
+    // Keep your original parameter update logic
     Dictionary new_params;
     new_params["reflection_screen_texture"] = reflection_texture;
     new_params["is_orthogonal_camera"] = is_orthogonal;
@@ -693,7 +500,7 @@ void PlanarReflectorCPP::update_shader_parameters()
     new_params["reflection_plane_distance"] = cached_reflection_plane.d;
     new_params["planar_surface_y"] = get_global_transform().get_origin().y;
     
-    // Only update parameters that have changed
+    // Keep your original update logic
     Array param_names = new_params.keys();
     for (int i = 0; i < param_names.size(); i++) {
         String param_name = param_names[i];
@@ -705,9 +512,38 @@ void PlanarReflectorCPP::update_shader_parameters()
     }
 }
 
+void PlanarReflectorCPP::clear_shader_texture_references()
+{
+    if (get_surface_override_material_count() == 0) {
+        return;
+    }
+
+    Ref<Material> material = get_active_material(0);
+
+    if (material.is_valid() && Object::cast_to<ShaderMaterial>(material.ptr())) 
+    {
+        UtilityFunctions::print("[PlanarReflectorCPP2] Clearing Shader Texture References");
+        ShaderMaterial *shader_material = Object::cast_to<ShaderMaterial>(material.ptr());
+        shader_material->set_shader_parameter("reflection_screen_texture", Variant());
+    }
+
+    if (is_material_cache_valid()) {
+        ShaderMaterial *material = get_cached_material();
+        if (material) {
+            // Clear the texture reference in shader
+            material->set_shader_parameter("reflection_screen_texture", Variant());
+        }
+    }
+    
+    // Clear cached references
+    if (cached_shader_params.has("reflection_screen_texture")) {
+        cached_shader_params.erase("reflection_screen_texture");
+    }
+    
+}
+
 Transform3D PlanarReflectorCPP::apply_reflection_offset(const Transform3D &base_transform)
 {
-    // Apply reflection offset to the base reflection transform
     if (!enable_reflection_offset) {
         return base_transform;
     }
@@ -715,21 +551,18 @@ Transform3D PlanarReflectorCPP::apply_reflection_offset(const Transform3D &base_
     Transform3D result_transform = base_transform;
     
     switch (offset_blend_mode) {
-        case 0: // Add mode - simple addition of offset
+        case 0: // Add
             result_transform.set_origin(result_transform.get_origin() + cached_offset_transform.get_origin());
-            // Apply rotational offset
             if (reflection_offset_rotation != Vector3()) {
                 result_transform.set_basis(result_transform.get_basis() * cached_offset_transform.get_basis());
             }
             break;
-        
-        case 1: // Multiply mode - relative to current transform
+        case 1: // Multiply
             result_transform = result_transform * cached_offset_transform;
             break;
-        
-        case 2: // Screen space shift mode - offset relative to camera view
-            if (active_main_camera) {
-                Vector3 view_offset = active_main_camera->get_global_transform().get_basis().xform(cached_offset_transform.get_origin());
+        case 2: // Screen space shift
+            if (main_camera) {
+                Vector3 view_offset = main_camera->get_global_transform().get_basis().xform(cached_offset_transform.get_origin());
                 result_transform.set_origin(result_transform.get_origin() + view_offset);
                 result_transform.set_basis(result_transform.get_basis() * cached_offset_transform.get_basis());
             }
@@ -741,19 +574,17 @@ Transform3D PlanarReflectorCPP::apply_reflection_offset(const Transform3D &base_
 
 void PlanarReflectorCPP::update_offset_cache()
 {
-    // Update the cached offset transform when offset parameters change
     if (!enable_reflection_offset) {
         cached_offset_transform = Transform3D();
         return;
     }
     
-    // ENHANCED: Only recalculate if values actually changed
+    // Only recalculate if values actually changed
     if (last_offset_position.is_equal_approx(reflection_offset_position) && 
         last_offset_rotation.is_equal_approx(reflection_offset_rotation)) {
         return;
     }
     
-    // Create offset transform
     Basis offset_basis;
     offset_basis = offset_basis.rotated(Vector3(1, 0, 0), Math::deg_to_rad(reflection_offset_rotation.x));
     offset_basis = offset_basis.rotated(Vector3(0, 1, 0), Math::deg_to_rad(reflection_offset_rotation.y));
@@ -765,16 +596,16 @@ void PlanarReflectorCPP::update_offset_cache()
     last_offset_rotation = reflection_offset_rotation;
 }
 
-bool PlanarReflectorCPP::should_update_reflection()
+bool PlanarReflectorCPP::should_update_reflection(Camera3D *active_cam)
 {
-    if (!active_main_camera) {
+    if (!active_cam || !is_inside_tree()) {
         return false;
     }
 
-    Vector3 current_pos = active_main_camera->get_global_transform().get_origin();
-    Basis current_basis = active_main_camera->get_global_transform().get_basis();
+    Vector3 current_pos = active_cam->get_global_transform().get_origin();
+    Basis current_basis = active_cam->get_global_transform().get_basis();
     
-    // ENHANCED: Check if camera moved/rotated enough to warrant update
+    // Check if camera moved/rotated enough to warrant update
     if (last_camera_position != Vector3()) {
         if (current_pos.is_equal_approx(last_camera_position)) {
             Vector3 current_euler = current_basis.get_euler();
@@ -791,39 +622,37 @@ bool PlanarReflectorCPP::should_update_reflection()
     return true;
 }
 
-// ENHANCED PERFORMANCE HELPER METHODS FROM GDSCRIPT
+// Performance Helper Methods
 bool PlanarReflectorCPP::is_material_cache_valid()
 {
-    // UtilityFunctions::print(" [PlanarReflectorCPP] is_material_cache_valid called");
-    if (!material_cache_valid) {
+    if (!material_cache_valid || !cached_material_pointer) {
         return false;
     }
     
-    // Validate that the material still exists and matches
+    // Check if the material pointer is still valid by comparing with current material
+    if (get_surface_override_material_count() == 0) {
+        return false;
+    }
+
     Ref<Material> current_material = get_active_material(0);
-    if (!current_material.is_valid() || !Object::cast_to<ShaderMaterial>(current_material.ptr())) {
-        return false;
-    }
-    
-    return true;
+    return current_material.is_valid() && current_material.ptr() == cached_material_pointer;
 }
 
 void PlanarReflectorCPP::refresh_material_cache()
 {
-    // UtilityFunctions::print(" [PlanarReflectorCPP] refresh_material_cache called");
-    // Check if we have any materials first to prevent surface index errors
-    if (get_surface_override_material_count() == 0) {
-        active_shader_material = nullptr;
+    if (!get_mesh().is_valid() || get_surface_override_material_count() == 0) {
+        cached_material_pointer = nullptr;
         material_cache_valid = false;
         return;
     }
-    
+
+
     Ref<Material> material = get_active_material(0);
     if (material.is_valid() && Object::cast_to<ShaderMaterial>(material.ptr())) {
-        active_shader_material = Object::cast_to<ShaderMaterial>(material.ptr());
+        cached_material_pointer = Object::cast_to<ShaderMaterial>(material.ptr());
         material_cache_valid = true;
     } else {
-        active_shader_material = nullptr;
+        cached_material_pointer = nullptr;
         material_cache_valid = false;
     }
 }
@@ -831,7 +660,7 @@ void PlanarReflectorCPP::refresh_material_cache()
 ShaderMaterial* PlanarReflectorCPP::get_cached_material()
 {
     if (is_material_cache_valid()) {
-        return active_shader_material;
+        return cached_material_pointer;
     }
     return nullptr;
 }
@@ -861,33 +690,40 @@ bool PlanarReflectorCPP::values_equal(Variant a, Variant b)
 
 Vector2i PlanarReflectorCPP::get_target_viewport_size()
 {
-    Vector2i target_size;
-    if (Engine::get_singleton()->is_editor_hint() && editor_helper) {
-        // Try to get editor viewport size from helper
-        Variant size_var = editor_helper->call("get_editor_viewport_size");
-        if (size_var.get_type() == Variant::VECTOR2I) {
-            target_size = size_var;
-        } else {
-            // Fallback to active camera's viewport
-            Viewport *vp = get_active_viewport();
-            if (vp) {
-                target_size = vp->get_visible_rect().size;
-            } else {
-                target_size = Vector2i(1920, 1080); // Default fallback
+    Vector2i target_size = Vector2i(1920, 1080); // Default fallback
+    
+    if (Engine::get_singleton()->is_editor_hint()) {
+        // Editor mode
+        if (editor_helper && editor_helper->has_method("get_editor_viewport_size")) {
+            Variant result = editor_helper->call("get_editor_viewport_size");
+            if (result.get_type() == Variant::VECTOR2I) {
+                target_size = result;
+            } else if (get_viewport()) {
+                target_size = get_viewport()->get_visible_rect().size;
             }
+        } else if (get_viewport()) {
+            target_size = get_viewport()->get_visible_rect().size;
         }
     } else {
-        // Game mode - use regular viewport
-        target_size = get_viewport()->get_visible_rect().size;
+        // Game mode
+        if (get_viewport()) {
+            target_size = get_viewport()->get_visible_rect().size;
+        }
     }
+    
+    // UtilityFunctions::print("[PlanarReflectorCPP2] Target viewport size: ", target_size);
     return target_size;
 }
 
 Vector2i PlanarReflectorCPP::apply_lod_to_size(Vector2i target_size, Camera3D *active_cam)
 {
+    if (!is_inside_tree()) {
+        return target_size;
+    }
+        
     double distance = get_global_transform().get_origin().distance_to(active_cam->get_global_transform().get_origin());
     
-    // ENHANCED: Cache LOD calculations when distance hasn't changed much
+    // Cache LOD calculations when distance hasn't changed much
     if (Math::abs(distance - last_distance_check) > 1.0) {
         double lod_factor = 1.0;
         if (distance > lod_distance_near) {
@@ -899,113 +735,99 @@ Vector2i PlanarReflectorCPP::apply_lod_to_size(Vector2i target_size, Camera3D *a
     }
     
     Vector2i result_size = Vector2i((double)target_size.x * cached_lod_factor, (double)target_size.y * cached_lod_factor);
-    result_size.x = Math::max(result_size.x, 128); // Minimum resolution
+    result_size.x = Math::max(result_size.x, 128);
     result_size.y = Math::max(result_size.y, 128);
     return result_size;
 }
 
 void PlanarReflectorCPP::invalidate_all_caches()
 {
-    // UtilityFunctions::print("[PlanarReflectorCPP] invalidate_all_caches called, cleaning up nodes");
     material_cache_valid = false;
-    active_shader_material = nullptr;
+    cached_material_pointer = nullptr;
     cached_shader_params.clear();
     reflection_plane_cache_valid = false;
     last_viewport_check_frame = -1;
     cached_viewport_size = Vector2i(0, 0);
-    compositor_effect_initialized = false;
-    last_compositor_settings.clear();
 }
 
-void PlanarReflectorCPP::_exit_tree() 
+// Public Interface Methods - CRITICAL FOR PLUGIN HELPER
+void PlanarReflectorCPP::set_editor_camera(Camera3D *viewport_camera)
 {
-    // UtilityFunctions::print("[PlanarReflectorCPP] _exit_tree called, cleaning up nodes");
-
-    // Safely clear compositor effects before freeing nodes
-    if (active_reflect_camera) {
-        clear_compositor_reflection_effect(active_reflect_camera);
-    }
-
-    // Remove and free game components
-    if (game_reflect_camera && Object::cast_to<Node>(game_reflect_camera)) {
-        // Clear compositor before freeing camera
-        if (game_reflect_camera->get_compositor().is_valid()) {
-            game_reflect_camera->set_compositor(Ref<Compositor>());
-        }
-        if (game_reflect_camera->is_inside_tree() && game_reflect_camera->get_parent()) {
-            game_reflect_camera->get_parent()->remove_child(game_reflect_camera);
-        }
-        if (game_reflect_camera->is_inside_tree()) {
-            game_reflect_camera->call_deferred("queue_free");
-            // UtilityFunctions::print("[PlanarReflectorCPP] Freed game_reflect_camera");
-        }
-        game_reflect_camera = nullptr;
-    }
-    if (game_reflect_viewport && Object::cast_to<Node>(game_reflect_viewport)) {
-        if (game_reflect_viewport->is_inside_tree() && game_reflect_viewport->get_parent()) {
-            game_reflect_viewport->get_parent()->remove_child(game_reflect_viewport);
-        }
-        if (game_reflect_viewport->is_inside_tree()) {
-            game_reflect_viewport->call_deferred("queue_free");
-            // UtilityFunctions::print("[PlanarReflectorCPP] Freed game_reflect_viewport");
-        }
-        game_reflect_viewport = nullptr;
-    }
-
-    // Remove and free editor components
-    if (editor_reflect_camera && Object::cast_to<Node>(editor_reflect_camera)) {
-        // Clear compositor before freeing camera
-        if (editor_reflect_camera->get_compositor().is_valid()) {
-            editor_reflect_camera->set_compositor(Ref<Compositor>());
-        }
-        if (editor_reflect_camera->is_inside_tree() && editor_reflect_camera->get_parent()) {
-            editor_reflect_camera->get_parent()->remove_child(editor_reflect_camera);
-        }
-        if (editor_reflect_camera->is_inside_tree()) {
-            editor_reflect_camera->call_deferred("queue_free");
-            // UtilityFunctions::print("[PlanarReflectorCPP] Freed editor_reflect_camera");
-        }
-        editor_reflect_camera = nullptr;
-    }
-    if (editor_reflect_viewport && Object::cast_to<Node>(editor_reflect_viewport)) {
-        if (editor_reflect_viewport->is_inside_tree() && editor_reflect_viewport->get_parent()) {
-            editor_reflect_viewport->get_parent()->remove_child(editor_reflect_viewport);
-        }
-        if (editor_reflect_viewport->is_inside_tree()) {
-            editor_reflect_viewport->call_deferred("queue_free");
-            // UtilityFunctions::print("[PlanarReflectorCPP] Freed editor_reflect_viewport");
-        }
-        editor_reflect_viewport = nullptr;
-    }
-
-    // Clear active pointers
-    active_main_camera = nullptr;
-    active_reflect_camera = nullptr;
-    active_reflect_viewport = nullptr;
-
-    // Invalidate caches and references
+    editor_camera = viewport_camera;
     invalidate_all_caches();
-    editor_helper = nullptr;
-    custom_compositor = nullptr;
-    custom_environment = nullptr;
+    update_reflect_viewport_size();
+    set_reflection_camera_transform();
 }
 
-//METHOD BINDINGS AND SETTERS FROM HERE
+Camera3D* PlanarReflectorCPP::get_active_camera()
+{
+    if (Engine::get_singleton()->is_editor_hint()) {
+        return editor_camera ? editor_camera : main_camera;
+    }
+    
+    // Game mode - add validation
+    if (!main_camera) {
+        UtilityFunctions::print("[PlanarReflectorCPP2] WARNING: main_camera is null in game mode");
+        return nullptr;
+    }
+
+    return main_camera;
+}
+
+bool PlanarReflectorCPP::is_planar_reflector_active()
+{
+    return is_active;
+}
+
+void PlanarReflectorCPP::_exit_tree()
+{
+    UtilityFunctions::print("[PlanarReflectorCPP2] _exit_tree Started");
+    
+    // CRITICAL FIX: Clear shader references FIRST
+    clear_shader_texture_references();
+    
+    // CRITICAL FIX: Stop viewport updates before cleanup
+    if (reflect_viewport) {
+        reflect_viewport->set_update_mode(SubViewport::UPDATE_DISABLED);
+    }
+    
+    // Clear compositor references
+    if (reflect_camera && reflect_camera->get_compositor().is_valid()) {
+        reflect_camera->set_compositor(Ref<Compositor>());
+    }
+    
+    // Wait one frame for cleanup to complete
+    call_deferred("complete_cleanup");
+}
+
+void PlanarReflectorCPP::complete_cleanup()
+{
+    invalidate_all_caches();
+    
+    // Safe viewport cleanup
+    if (reflect_viewport && Object::cast_to<Node>(reflect_viewport)) {
+        if (reflect_viewport->is_inside_tree()) {
+            reflect_viewport->queue_free();
+        }
+    }
+    
+    reflect_viewport = nullptr;
+    reflect_camera = nullptr;
+    editor_helper = nullptr;
+}
+
+// Method Bindings
 void PlanarReflectorCPP::_bind_methods() 
 {
-    //Method bindings to be able to access those from GDScript and make Godot "See those"
+    // Core property
     ClassDB::bind_method(D_METHOD("set_is_active", "p_active"), &PlanarReflectorCPP::set_is_active);
     ClassDB::bind_method(D_METHOD("get_is_active"), &PlanarReflectorCPP::get_is_active);
     ADD_PROPERTY(PropertyInfo(Variant::BOOL, "is_active"), "set_is_active", "get_is_active");
 
     // Core camera and resolution properties
-    ClassDB::bind_method(D_METHOD("set_game_main_camera", "p_camera"), &PlanarReflectorCPP::set_game_main_camera);
-    ClassDB::bind_method(D_METHOD("get_game_main_camera"), &PlanarReflectorCPP::get_game_main_camera);
-    ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "main_camera", PROPERTY_HINT_NODE_TYPE, "Camera3D"), "set_game_main_camera", "get_game_main_camera");
-    
-    // Editor camera methods (not exposed as property)
-    ClassDB::bind_method(D_METHOD("set_editor_camera", "p_camera"), &PlanarReflectorCPP::set_editor_camera);
-    ClassDB::bind_method(D_METHOD("get_editor_camera"), &PlanarReflectorCPP::get_editor_camera);
+    ClassDB::bind_method(D_METHOD("set_main_camera", "p_camera"), &PlanarReflectorCPP::set_main_camera);
+    ClassDB::bind_method(D_METHOD("get_main_camera"), &PlanarReflectorCPP::get_main_camera);
+    ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "main_camera", PROPERTY_HINT_NODE_TYPE, "Camera3D"), "set_main_camera", "get_main_camera");
     
     ClassDB::bind_method(D_METHOD("set_reflection_camera_resolution", "p_resolution"), &PlanarReflectorCPP::set_reflection_camera_resolution);
     ClassDB::bind_method(D_METHOD("get_reflection_camera_resolution"), &PlanarReflectorCPP::get_reflection_camera_resolution);
@@ -1039,15 +861,15 @@ void PlanarReflectorCPP::_bind_methods()
     ClassDB::bind_method(D_METHOD("get_custom_environment"), &PlanarReflectorCPP::get_custom_environment);
     ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "custom_environment", PROPERTY_HINT_RESOURCE_TYPE, "Environment"), "set_custom_environment", "get_custom_environment");
 
-    // NEW: Reflection Compositor Effects Group
+    // Reflection Compositor Effects Group
     ADD_GROUP("Reflection Compositor Effects", "");
-    ClassDB::bind_method(D_METHOD("set_use_custom_compositor", "p_use_custom"), &PlanarReflectorCPP::set_use_custom_compositor);
-    ClassDB::bind_method(D_METHOD("get_use_custom_compositor"), &PlanarReflectorCPP::get_use_custom_compositor);
-    ADD_PROPERTY(PropertyInfo(Variant::BOOL, "use_custom_compositor"), "set_use_custom_compositor", "get_use_custom_compositor");
+    // ClassDB::bind_method(D_METHOD("set_use_custom_compositor", "p_use_custom"), &PlanarReflectorCPP2::set_use_custom_compositor);
+    // ClassDB::bind_method(D_METHOD("get_use_custom_compositor"), &PlanarReflectorCPP2::get_use_custom_compositor);
+    // ADD_PROPERTY(PropertyInfo(Variant::BOOL, "use_custom_compositor"), "set_use_custom_compositor", "get_use_custom_compositor");
 
-    ClassDB::bind_method(D_METHOD("set_custom_compositor", "p_compositor"), &PlanarReflectorCPP::set_custom_compositor);
-    ClassDB::bind_method(D_METHOD("get_custom_compositor"), &PlanarReflectorCPP::get_custom_compositor);
-    ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "custom_compositor", PROPERTY_HINT_RESOURCE_TYPE, "Compositor"), "set_custom_compositor", "get_custom_compositor");
+    ClassDB::bind_method(D_METHOD("set_active_compositor", "p_compositor"), &PlanarReflectorCPP::set_active_compositor);
+    ClassDB::bind_method(D_METHOD("get_active_compositor"), &PlanarReflectorCPP::get_active_compositor);
+    ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "active_compositor", PROPERTY_HINT_RESOURCE_TYPE, "Compositor"), "set_active_compositor", "get_active_compositor");
 
     ClassDB::bind_method(D_METHOD("set_hide_intersect_reflections", "p_hide"), &PlanarReflectorCPP::set_hide_intersect_reflections);
     ClassDB::bind_method(D_METHOD("get_hide_intersect_reflections"), &PlanarReflectorCPP::get_hide_intersect_reflections);
@@ -1109,79 +931,55 @@ void PlanarReflectorCPP::_bind_methods()
     ClassDB::bind_method(D_METHOD("get_lod_resolution_multiplier"), &PlanarReflectorCPP::get_lod_resolution_multiplier);
     ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "lod_resolution_multiplier", PROPERTY_HINT_RANGE, "0.1,1.0,0.01"), "set_lod_resolution_multiplier", "get_lod_resolution_multiplier");
 
-    ClassDB::bind_method(D_METHOD("update_shader_parameters"), &PlanarReflectorCPP::update_shader_parameters);
-    ClassDB::bind_method(D_METHOD("update_viewport"), &PlanarReflectorCPP::update_viewport);
-    ClassDB::bind_method(D_METHOD("update_reflection_camera"), &PlanarReflectorCPP::update_reflection_camera);
+    // Utility methods for editor integration - CRITICAL FOR PLUGIN HELPER
+    ClassDB::bind_method(D_METHOD("set_editor_camera", "viewport_camera"), &PlanarReflectorCPP::set_editor_camera);
     ClassDB::bind_method(D_METHOD("get_active_camera"), &PlanarReflectorCPP::get_active_camera);
-    ClassDB::bind_method(D_METHOD("run_editor_setup_init"), &PlanarReflectorCPP::run_editor_setup_init);
-    ClassDB::bind_method(D_METHOD("run_game_setup_init"), &PlanarReflectorCPP::run_game_setup_init);
+    ClassDB::bind_method(D_METHOD("is_planar_reflector_active"), &PlanarReflectorCPP::is_planar_reflector_active);
+    
+    // CRITICAL: Additional methods that plugin helper needs
+    ClassDB::bind_method(D_METHOD("update_reflect_viewport_size"), &PlanarReflectorCPP::update_reflect_viewport_size);
+    ClassDB::bind_method(D_METHOD("set_reflection_camera_transform"), &PlanarReflectorCPP::set_reflection_camera_transform);
+    
+    // Method bindings for manual calls (useful for debugging and plugin integration)
+    ClassDB::bind_method(D_METHOD("setup_reflection_camera_and_viewport"), &PlanarReflectorCPP::setup_reflection_camera_and_viewport);
+    ClassDB::bind_method(D_METHOD("invalidate_all_caches"), &PlanarReflectorCPP::invalidate_all_caches);
+
+    ClassDB::bind_method(D_METHOD("initial_setup"), &PlanarReflectorCPP::initial_setup);
+
+    ClassDB::bind_method(D_METHOD("setup_compositor_reflection_effect", "reflect_cam"), &PlanarReflectorCPP::setup_compositor_reflection_effect);
+
+    ClassDB::bind_method(D_METHOD("create_viewport_deferred"), &PlanarReflectorCPP::create_viewport_deferred);
+    ClassDB::bind_method(D_METHOD("clear_shader_texture_references"), &PlanarReflectorCPP::clear_shader_texture_references);
+    ClassDB::bind_method(D_METHOD("complete_cleanup"), &PlanarReflectorCPP::complete_cleanup);
+    ClassDB::bind_method(D_METHOD("finalize_setup"), &PlanarReflectorCPP::finalize_setup);
+
 }
 
-// SETTERS AND GETTERS IMPLEMENTATION FROM HERE:
+// SETTERS AND GETTERS IMPLEMENTATION
 
 void PlanarReflectorCPP::set_is_active(const bool p_active) { is_active = p_active; }
 bool PlanarReflectorCPP::get_is_active() const { return is_active; }
 
-// Core camera and resolution controls
-void PlanarReflectorCPP::set_game_main_camera(Camera3D *p_camera) 
+void PlanarReflectorCPP::set_main_camera(Camera3D *p_camera) 
 {
-    game_main_camera = Object::cast_to<Camera3D>(p_camera);
+    main_camera = Object::cast_to<Camera3D>(p_camera);
     
-    // If we're in game mode and already initialized, update the active pointer
-    if (!Engine::get_singleton()->is_editor_hint() && game_reflect_camera) {
-        active_main_camera = game_main_camera;
-        
-        // Update reflection camera properties
-        if (game_main_camera && game_reflect_camera) {
-            game_reflect_camera->set_attributes(game_main_camera->get_attributes());
-            game_reflect_camera->set_doppler_tracking(game_main_camera->get_doppler_tracking());
-            setup_reflection_environment();
-        }
+    if (reflect_camera && main_camera) {
+        reflect_camera->set_attributes(main_camera->get_attributes());
+        reflect_camera->set_doppler_tracking(main_camera->get_doppler_tracking());
+        setup_reflection_environment();
     }
 }
-
-Camera3D* PlanarReflectorCPP::get_game_main_camera() const { return game_main_camera; }
-
-void PlanarReflectorCPP::set_editor_camera(Camera3D *p_camera) 
-{
-    editor_camera = Object::cast_to<Camera3D>(p_camera);
-    
-    if (Engine::get_singleton()->is_editor_hint() && editor_camera) {
-        // Update active camera pointer
-        active_main_camera = editor_camera;
-        
-        // Update editor reflection camera properties if it exists
-        if (editor_reflect_camera) 
-        {
-            editor_reflect_camera->set_projection(editor_camera->get_projection());
-            if (editor_reflect_camera->get_projection() == Camera3D::PROJECTION_ORTHOGONAL) {
-                editor_reflect_camera->set_size(editor_camera->get_size() * ortho_scale_multiplier);
-            } else {
-                editor_reflect_camera->set_fov(editor_camera->get_fov());
-            }
-        }
-        
-        // Invalidate caches when editor camera changes
-        invalidate_all_caches();
-        call_deferred("run_editor_setup_init");
-        call_deferred("update_viewport");
-        call_deferred("update_reflection_camera");
-    }
-}
-
-Camera3D* PlanarReflectorCPP::get_editor_camera() const { return editor_camera; }
+Camera3D* PlanarReflectorCPP::get_main_camera() const { return main_camera; }
 
 void PlanarReflectorCPP::set_reflection_camera_resolution(const Vector2i p_resolution) 
 { 
     reflection_camera_resolution = p_resolution;
-    
-    // Update viewport size if it exists
-    if (active_reflect_viewport) {
-        active_reflect_viewport->set_size(reflection_camera_resolution);
-        cached_viewport_size = reflection_camera_resolution; // Update cache
+    if (reflect_viewport) {
+        reflect_viewport->set_size(reflection_camera_resolution);
+        cached_viewport_size = reflection_camera_resolution;
     }
 }
-
 Vector2i PlanarReflectorCPP::get_reflection_camera_resolution() const { return reflection_camera_resolution; }
 
 // Camera Controls Group
@@ -1198,9 +996,10 @@ bool PlanarReflectorCPP::get_auto_detect_camera_mode() const { return auto_detec
 void PlanarReflectorCPP::set_reflection_layers(int p_layers)
 {
     reflection_layers = p_layers;    
-    // Update reflection camera cull mask if it exists
-    if (active_reflect_camera) {
-        setup_reflection_layers();
+    if (reflect_camera) {
+        int cull_mask = reflection_layers;
+        reflect_camera->set_cull_mask(cull_mask);
+        is_layer_one_active = bool(cull_mask & (1 << 0));
     }
 }
 int PlanarReflectorCPP::get_reflection_layers() const { return reflection_layers; }
@@ -1208,52 +1007,47 @@ int PlanarReflectorCPP::get_reflection_layers() const { return reflection_layers
 void PlanarReflectorCPP::set_use_custom_environment(bool p_use_custom)
 {
     use_custom_environment = p_use_custom;
-    // Update environment setup if reflection camera exists
-    if (active_reflect_camera) {
+    if (is_inside_tree()) {
         setup_reflection_environment();
     }
 }
-
 bool PlanarReflectorCPP::get_use_custom_environment() const { return use_custom_environment; }
 
 void PlanarReflectorCPP::set_custom_environment(Environment *p_environment)
 {
     custom_environment = Object::cast_to<Environment>(p_environment);
-    // Update environment setup if reflection camera exists and we're using custom environment
-    if (active_reflect_camera && use_custom_environment) {
+    if (use_custom_environment && is_inside_tree()) {
         setup_reflection_environment();
     }
 }
 Environment* PlanarReflectorCPP::get_custom_environment() const { return custom_environment; }
 
-// NEW: Reflection Compositor Effects Group
-void PlanarReflectorCPP::set_use_custom_compositor(bool p_use_custom)
+// Reflection Compositor Effects Group
+void PlanarReflectorCPP::set_active_compositor(Compositor *p_compositor)
 {
-    use_custom_compositor = p_use_custom;
-    if (active_reflect_camera) {
-        setup_compositor_reflection_effect(active_reflect_camera);
+    if (p_compositor) {
+        active_compositor = Ref<Compositor>(p_compositor);
+    } else {
+        active_compositor.unref();  // Properly clear the Ref
+    }
+    
+    if (reflect_camera && is_inside_tree()) {
+        setup_compositor_reflection_effect(reflect_camera);
     }
 }
-bool PlanarReflectorCPP::get_use_custom_compositor() const { return use_custom_compositor; }
 
-void PlanarReflectorCPP::set_custom_compositor(Compositor *p_compositor)
-{
-    custom_compositor = Object::cast_to<Compositor>(p_compositor);
-    if (active_reflect_camera && use_custom_compositor) {
-        setup_compositor_reflection_effect(active_reflect_camera);
-    }
+Compositor* PlanarReflectorCPP::get_active_compositor() const 
+{ 
+    return active_compositor.ptr(); 
 }
-Compositor* PlanarReflectorCPP::get_custom_compositor() const { return custom_compositor; }
 
 void PlanarReflectorCPP::set_hide_intersect_reflections(bool p_hide)
 {
+    UtilityFunctions::print("[PlanarReflectorCPP2] Hide Intersect Reflections - Set Started");
     hide_intersect_reflections = p_hide;
-    if (active_reflect_camera) {
-        if (p_hide) {
-            setup_compositor_reflection_effect(active_reflect_camera);
-        } else {
-            clear_compositor_reflection_effect(active_reflect_camera);
-        }
+    if (reflect_camera && is_inside_tree()) {
+        // setup_compositor_reflection_effect(reflect_camera);
+        update_compositor_parameters();
     }
 }
 bool PlanarReflectorCPP::get_hide_intersect_reflections() const { return hide_intersect_reflections; }
@@ -1261,8 +1055,9 @@ bool PlanarReflectorCPP::get_hide_intersect_reflections() const { return hide_in
 void PlanarReflectorCPP::set_override_YAxis_height(bool p_override)
 {
     override_YAxis_height = p_override;
-    if (active_reflect_camera) {
-        setup_compositor_reflection_effect(active_reflect_camera);
+    if (reflect_camera && is_inside_tree()) {
+        // setup_compositor_reflection_effect(reflect_camera);
+        update_compositor_parameters();
     }
 }
 bool PlanarReflectorCPP::get_override_YAxis_height() const { return override_YAxis_height; }
@@ -1270,8 +1065,9 @@ bool PlanarReflectorCPP::get_override_YAxis_height() const { return override_YAx
 void PlanarReflectorCPP::set_new_YAxis_height(double p_height)
 {
     new_YAxis_height = p_height;
-    if (active_reflect_camera) {
-        setup_compositor_reflection_effect(active_reflect_camera);
+    if (reflect_camera && is_inside_tree()) {
+        // setup_compositor_reflection_effect(reflect_camera);
+        update_compositor_parameters();
     }
 }
 double PlanarReflectorCPP::get_new_YAxis_height() const { return new_YAxis_height; }
@@ -1279,8 +1075,9 @@ double PlanarReflectorCPP::get_new_YAxis_height() const { return new_YAxis_heigh
 void PlanarReflectorCPP::set_fill_reflection_experimental(bool p_fill)
 {
     fill_reflection_experimental = p_fill;
-    if (active_reflect_camera) {
-        setup_compositor_reflection_effect(active_reflect_camera);
+    if (reflect_camera && is_inside_tree()) {
+        // setup_compositor_reflection_effect(reflect_camera);
+        update_compositor_parameters();
     }
 }
 bool PlanarReflectorCPP::get_fill_reflection_experimental() const { return fill_reflection_experimental; }

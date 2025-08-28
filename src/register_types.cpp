@@ -2,8 +2,6 @@
 
 //Include the other headers you want to register with Godot
 #include "PlanarReflectorCPP.h"
-#include "ReflectionEffectPrePass.h"
-#include "PlanarReflectorCPP2.h"
 
 
 //your Godot and GDExtensions base classes
@@ -22,10 +20,8 @@ void initialize_planar_reflector_types(ModuleInitializationLevel p_level)
         return;
     }
 
-    // Register both classes at SCENE level
+    // Register classes
     ClassDB::register_class<PlanarReflectorCPP>();
-    ClassDB::register_class<ReflectionEffectPrePass>();
-    ClassDB::register_class<PlanarReflectorCPP2>();
 
     
     // UtilityFunctions::print("Both PlanarReflectorCPP and ReflectionEffectPrePass registered at SCENE level");
