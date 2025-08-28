@@ -135,6 +135,11 @@ namespace godot {
         Vector2i apply_lod_to_size(Vector2i target_size, Camera3D *active_cam);
         void invalidate_all_caches();
 
+        void create_viewport_deferred();
+        void clear_shader_texture_references();
+        void complete_cleanup();
+        void finalize_setup();
+
     protected:
         static void _bind_methods();
 
