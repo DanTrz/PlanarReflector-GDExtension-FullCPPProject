@@ -89,10 +89,10 @@ namespace godot {
         Vector3 last_offset_rotation = Vector3();
 
         // Performance caches (from GDScript improvements)
-        ShaderMaterial* cached_material_pointer = nullptr;
-        bool material_cache_valid = false;
-        Dictionary cached_shader_params;
-        Vector2i cached_viewport_size = Vector2i(0, 0);
+        // ShaderMaterial* cached_material_pointer = nullptr;
+        // bool material_cache_valid = false;
+        // Dictionary cached_shader_params;
+        // Vector2i cached_viewport_size = Vector2i(0, 0);
         int last_viewport_check_frame = -1;
         int viewport_check_frequency = 5;
         Transform3D last_global_transform = Transform3D();
@@ -126,10 +126,10 @@ namespace godot {
         bool should_update_reflection(Camera3D *active_cam);
         
         // Performance helper methods
-        bool is_material_cache_valid();
-        void refresh_material_cache();
-        ShaderMaterial* get_cached_material();
-        bool values_equal(Variant a, Variant b);
+        // bool is_material_cache_valid();
+        // void refresh_material_cache();
+        // ShaderMaterial* get_cached_material();
+        // bool values_equal(Variant a, Variant b);
         Vector2i get_target_viewport_size();
         Vector2i apply_lod_to_size(Vector2i target_size, Camera3D *active_cam);
         void invalidate_all_caches();
