@@ -69,9 +69,9 @@ namespace godot {
 
         // Performance parameters
         int update_frequency = 2;
-        bool use_lod = true;
-        double lod_distance_near = 8.0;
-        double lod_distance_far = 24.0;
+        bool use_lod = false;
+        double lod_distance_near = 10.0;
+        double lod_distance_far = 25.0;
         double lod_resolution_multiplier = 0.45;
 
         // Internal optimization variables
@@ -105,7 +105,6 @@ namespace godot {
         void setup_reflection_camera_and_viewport();
         void setup_reflection_environment();
         void find_editor_helper();
-        void find_reflection_effect_class();
 
         
         // Compositor methods
