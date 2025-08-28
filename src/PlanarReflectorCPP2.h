@@ -54,7 +54,7 @@ namespace godot {
 
         // Reflection Compositor Effects
         // bool use_custom_compositor = false;
-        Compositor *active_compositor = nullptr;
+        Ref<Compositor> active_compositor;
         bool hide_intersect_reflections = true;
         bool override_YAxis_height = false;
         double new_YAxis_height = 0.0;
@@ -110,7 +110,8 @@ namespace godot {
         
         // Compositor methods
         void setup_compositor_reflection_effect(Camera3D *reflect_cam);
-        void create_new_compositor_effect(Camera3D *reflect_cam);
+        void update_compositor_parameters();
+        Ref<Compositor> create_new_compositor();bool compositor_was_set_explicitly = false; 
         ReflectionEffectPrePass* set_reflection_effect(CompositorEffect *comp_effect);
         void clear_compositor_reflection_effect(Camera3D *reflect_cam);
         CompositorEffect* get_reflection_effect(Compositor *comp);
