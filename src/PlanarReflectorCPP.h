@@ -68,8 +68,8 @@ namespace godot {
         int offset_blend_mode = 0;
 
         // Performance parameters
-        int update_frequency = 2;
-        bool use_lod = false;
+        int update_frequency = 3;
+        bool use_lod = true;
         double lod_distance_near = 10.0;
         double lod_distance_far = 25.0;
         double lod_resolution_multiplier = 0.45;
@@ -88,15 +88,10 @@ namespace godot {
         Vector3 last_offset_position = Vector3();
         Vector3 last_offset_rotation = Vector3();
 
-        // Performance caches (from GDScript improvements)
-        // ShaderMaterial* cached_material_pointer = nullptr;
-        // bool material_cache_valid = false;
-        // Dictionary cached_shader_params;
-        // Vector2i cached_viewport_size = Vector2i(0, 0);
+        // Performance caches 
         int last_viewport_check_frame = -1;
         int viewport_check_frequency = 5;
         Transform3D last_global_transform = Transform3D();
-        bool reflection_plane_cache_valid = false;
         double last_distance_check = -1.0;
         double cached_lod_factor = 1.0;
 
@@ -122,21 +117,14 @@ namespace godot {
         void update_reflect_viewport_size();
         void update_shader_parameters();
         Transform3D apply_reflection_offset(const Transform3D &base_transform);
-        void update_offset_cache();
+        // void update_offset_cache();
         bool should_update_reflection(Camera3D *active_cam);
         
         // Performance helper methods
-        // bool is_material_cache_valid();
-        // void refresh_material_cache();
-        // ShaderMaterial* get_cached_material();
-        // bool values_equal(Variant a, Variant b);
         Vector2i get_target_viewport_size();
         Vector2i apply_lod_to_size(Vector2i target_size, Camera3D *active_cam);
-        void invalidate_all_caches();
-
         void create_viewport_deferred();
         void clear_shader_texture_references();
-        void complete_cleanup();
         void finalize_setup();
 
     protected:

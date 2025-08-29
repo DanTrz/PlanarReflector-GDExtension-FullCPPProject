@@ -28,7 +28,6 @@ using namespace godot;
 PlanarReflectorCPP::PlanarReflectorCPP() 
 {  
     // UtilityFunctions::print("[PlanarReflectorCPP2] Constructor Started");
-
     // Initialize with safe defaults
     is_active = true;
     reflection_camera_resolution = Vector2i(1920, 1080);
@@ -50,8 +49,8 @@ PlanarReflectorCPP::PlanarReflectorCPP()
     reflection_offset_scale = 1.0;
     offset_blend_mode = 0;
     
-    update_frequency = 2;
-    use_lod = false;
+    update_frequency = 3;
+    use_lod = true;
     lod_distance_near = 10.0;
     lod_distance_far = 25.0;
     lod_resolution_multiplier = 0.45;
@@ -63,11 +62,8 @@ PlanarReflectorCPP::PlanarReflectorCPP()
     is_layer_one_active = true;
     
     // Initialize performance caches
-    // material_cache_valid = false;
-    // cached_material_pointer = nullptr;
     last_viewport_check_frame = -1;
     viewport_check_frequency = 5;
-    reflection_plane_cache_valid = false;
     last_distance_check = -1.0;
     cached_lod_factor = 1.0;
 }
@@ -90,15 +86,8 @@ void PlanarReflectorCPP::_ready()
 void PlanarReflectorCPP::_notification(int what)
 {
     if (what == NOTIFICATION_TRANSFORM_CHANGED) {
-        reflection_plane_cache_valid = false;
         if (reflect_camera && reflect_camera->get_compositor().is_valid()) 
         {
-            //TODO: IMPLEMENT THIS BACK IN A NEW WAY # DEBUG
-            // Ref<Compositor> compositor = reflect_camera->get_compositor();
-            // CompositorEffect *effect = get_reflection_effect(compositor.ptr());
-            // if (effect) {
-            //     set_reflection_effect(effect);
-            // }
             update_reflect_viewport_size();
             set_reflection_camera_transform();
             update_compositor_parameters();
@@ -121,8 +110,6 @@ void PlanarReflectorCPP::initial_setup()
     }
 
     setup_reflection_camera_and_viewport();
-    update_offset_cache();
-    invalidate_all_caches();
     
     // CRITICAL FIX: Defer these until viewport is ready
     call_deferred("finalize_setup");
@@ -137,16 +124,13 @@ void PlanarReflectorCPP::finalize_setup()
 
 void PlanarReflectorCPP::_process(double delta) 
 {
-    //  if (Engine::get_singleton()->is_editor_hint() == false) {
-    //      return;
-    //  }
     
     if (!is_inside_tree() || !is_active) {
+        // UtilityFunctions::print("[PlanarReflectorCPP] ERROR: _process - Not Inside Tree or is not active");
         return;
     }
-    
+     
     frame_counter++;
-    update_offset_cache();
     
     // Less frequent viewport size updates 
     if (viewport_check_frequency > 0 && frame_counter % viewport_check_frequency == 0) {
@@ -161,12 +145,6 @@ void PlanarReflectorCPP::_process(double delta)
             set_reflection_camera_transform();
         }
     }
-    // if (should_update) {
-    //     Camera3D *active_cam = get_active_camera();
-    //     if (active_cam && should_update_reflection(active_cam)) {
-    //         set_reflection_camera_transform();
-    //     }
-    // }
 }
 
 void PlanarReflectorCPP::setup_reflection_camera_and_viewport()
@@ -238,9 +216,6 @@ void PlanarReflectorCPP::create_viewport_deferred()
     }
 }
 
-// CRITICAL: Add this new method
-
-
 void PlanarReflectorCPP::setup_reflection_environment()
 {
     if (!reflect_camera) {
@@ -271,7 +246,6 @@ void PlanarReflectorCPP::find_editor_helper()
         }
     }
 }
-
 
 void PlanarReflectorCPP::setup_compositor_reflection_effect(Camera3D *reflect_cam) 
 {
@@ -360,9 +334,6 @@ Plane PlanarReflectorCPP::calculate_reflection_plane()
     }
         
     Transform3D current_transform = get_global_transform();
-    if (reflection_plane_cache_valid && current_transform.is_equal_approx(last_global_transform)) {
-        return cached_reflection_plane;
-    }
     
     Transform3D reflection_transform = current_transform * Transform3D().rotated(Vector3(1, 0, 0), Math_PI / 2.0);
     Vector3 plane_origin = reflection_transform.get_origin();
@@ -370,19 +341,48 @@ Plane PlanarReflectorCPP::calculate_reflection_plane()
     
     cached_reflection_plane = Plane(plane_normal, plane_origin.dot(plane_normal));
     last_global_transform = current_transform;
-    reflection_plane_cache_valid = true;
     
     return cached_reflection_plane;
 }
 
+void PlanarReflectorCPP::update_reflect_viewport_size()
+{
+    if (!reflect_viewport) {
+        UtilityFunctions::print("[PlanarReflectorCPP] ERROR: update_reflect_viewport_size - reflect_viewport is null");
+
+        return;
+    }
+    
+    // Optimized viewport size checking frequency  
+    if (frame_counter - last_viewport_check_frame < viewport_check_frequency) {
+        return;
+    }
+    last_viewport_check_frame = frame_counter;
+    
+    Vector2i target_size = get_target_viewport_size();
+    Camera3D *active_cam = get_active_camera();
+    
+    if (use_lod && active_cam) {
+        target_size = apply_lod_to_size(target_size, active_cam);
+    }
+
+    reflect_viewport->set_size(target_size);
+}
+//This is the method that updated the Reflection Camera and Sets Shader Parameters (Refresh Method)
 void PlanarReflectorCPP::set_reflection_camera_transform()
 {
+    // UtilityFunctions::print("[PlanarReflectorCPP] set_reflection_camera_transform called");
+
     if (!is_inside_tree()) {
+        UtilityFunctions::print("[PlanarReflectorCPP] ERROR: set_reflection_camera_transform Stoped - Not Inside Tree");
+
         return;
     }
         
     Camera3D *active_camera = get_active_camera();
     if (!active_camera || !reflect_camera) {
+    UtilityFunctions::print("[PlanarReflectorCPP] set_reflection_camera_transform Stoped");
+
         return;
     }
         
@@ -408,7 +408,53 @@ void PlanarReflectorCPP::set_reflection_camera_transform()
     Transform3D final_reflection_transform = apply_reflection_offset(base_reflection_transform);
     
     reflect_camera->set_global_transform(final_reflection_transform);
+
+    // UtilityFunctions::print("[PlanarReflectorCPP] set_reflection_camera_transform ENDED");
+    
     update_shader_parameters();
+}
+
+void PlanarReflectorCPP::update_shader_parameters()
+{
+    // UtilityFunctions::print("[PlanarReflectorCPP2] update_shader_parameters called");
+
+    if (get_surface_override_material_count() == 0) {
+        UtilityFunctions::print("[PlanarReflectorCPP] ERROR: update_shader_parameters - No surface material");
+
+        return;
+    }
+    
+    ShaderMaterial *material  = Object::cast_to<ShaderMaterial>(get_active_material(0).ptr()); 
+    // ShaderMaterial *material = get_cached_material();
+    if (!material || !reflect_viewport) {
+        UtilityFunctions::print("[PlanarReflectorCPP] ERROR: update_shader_parameters - No material or ViewPort");
+        return;
+    }
+
+    Ref<Texture2D> reflection_texture = reflect_viewport->get_texture();
+    bool is_orthogonal = false;
+    
+    Camera3D *active_cam = get_active_camera();
+    if (active_cam) {
+        is_orthogonal = (active_cam->get_projection() == Camera3D::PROJECTION_ORTHOGONAL);
+    }
+    
+    if(reflection_texture.is_null() || reflection_texture.is_valid() == false || reflection_texture->get_size() != reflect_viewport->get_size())
+    {
+        UtilityFunctions::print("[PlanarReflectorCPP] ERROR: update_shader_parameters - No valid texture found");
+    }
+    
+    // Update Sahder parameter update logic
+    // UtilityFunctions::print("[PlanarReflectorCPP2] Updating Shader Parameters - Reset Texture to Shader");
+    material->set_shader_parameter("reflection_screen_texture", reflection_texture);
+    material->set_shader_parameter("is_orthogonal_camera", is_orthogonal);
+    material->set_shader_parameter("ortho_uv_scale", ortho_uv_scale);
+    material->set_shader_parameter("reflection_offset_enabled", enable_reflection_offset);
+    material->set_shader_parameter("reflection_offset_position", reflection_offset_position);
+    material->set_shader_parameter("reflection_offset_scale", reflection_offset_scale);
+    material->set_shader_parameter("reflection_plane_normal", cached_reflection_plane.get_normal());
+    material->set_shader_parameter("reflection_plane_distance", cached_reflection_plane.d);
+    material->set_shader_parameter("planar_surface_y", get_global_transform().get_origin().y);
 }
 
 void PlanarReflectorCPP::update_camera_projection()
@@ -429,68 +475,6 @@ void PlanarReflectorCPP::update_camera_projection()
     }
 }
 
-void PlanarReflectorCPP::update_reflect_viewport_size()
-{
-    if (!reflect_viewport) {
-        return;
-    }
-    
-    // Optimized viewport size checking frequency  
-    if (frame_counter - last_viewport_check_frame < viewport_check_frequency) {
-        return;
-    }
-    last_viewport_check_frame = frame_counter;
-    
-    Vector2i target_size = get_target_viewport_size();
-    Camera3D *active_cam = get_active_camera();
-    
-    if (use_lod && active_cam) {
-        target_size = apply_lod_to_size(target_size, active_cam);
-    }
-    
-    // // Only update if size actually changed
-    // if (cached_viewport_size != target_size) {
-    //     reflect_viewport->set_size(target_size);
-    //     cached_viewport_size = target_size;
-    // }
-}
-
-void PlanarReflectorCPP::update_shader_parameters()
-{
-    if (get_surface_override_material_count() == 0) {
-        return;
-    }
-
-    // if (!is_material_cache_valid()) {
-    //     refresh_material_cache();
-    // }
-    
-    ShaderMaterial *material  = Object::cast_to<ShaderMaterial>(get_active_material(0).ptr()); 
-    // ShaderMaterial *material = get_cached_material();
-    if (!material || !reflect_viewport) {
-        return;
-    }
-
-    Ref<Texture2D> reflection_texture = reflect_viewport->get_texture();
-    bool is_orthogonal = false;
-    
-    Camera3D *active_cam = get_active_camera();
-    if (active_cam) {
-        is_orthogonal = (active_cam->get_projection() == Camera3D::PROJECTION_ORTHOGONAL);
-    }
-    
-    // Update Sahder parameter update logic
-    material->set_shader_parameter("reflection_screen_texture", reflection_texture);
-    material->set_shader_parameter("is_orthogonal_camera", is_orthogonal);
-    material->set_shader_parameter("ortho_uv_scale", ortho_uv_scale);
-    material->set_shader_parameter("reflection_offset_enabled", enable_reflection_offset);
-    material->set_shader_parameter("reflection_offset_position", reflection_offset_position);
-    material->set_shader_parameter("reflection_offset_scale", reflection_offset_scale);
-    material->set_shader_parameter("reflection_plane_normal", cached_reflection_plane.get_normal());
-    material->set_shader_parameter("reflection_plane_distance", cached_reflection_plane.d);
-    material->set_shader_parameter("planar_surface_y", get_global_transform().get_origin().y);
-}
-
 void PlanarReflectorCPP::clear_shader_texture_references()
 {
     if (get_surface_override_material_count() == 0) {
@@ -505,19 +489,6 @@ void PlanarReflectorCPP::clear_shader_texture_references()
         ShaderMaterial *shader_material = Object::cast_to<ShaderMaterial>(material.ptr());
         shader_material->set_shader_parameter("reflection_screen_texture", Variant());
     }
-
-    // if (is_material_cache_valid()) {
-    //     ShaderMaterial *material = get_cached_material();
-    //     if (material) {
-    //         // Clear the texture reference in shader
-    //         material->set_shader_parameter("reflection_screen_texture", Variant());
-    //     }
-    // }
-    
-    // Clear cached references
-    // if (cached_shader_params.has("reflection_screen_texture")) {
-    //     cached_shader_params.erase("reflection_screen_texture");
-    // }
     
 }
 
@@ -550,122 +521,6 @@ Transform3D PlanarReflectorCPP::apply_reflection_offset(const Transform3D &base_
     
     return result_transform;
 }
-
-void PlanarReflectorCPP::update_offset_cache()
-{
-    if (!enable_reflection_offset) {
-        cached_offset_transform = Transform3D();
-        return;
-    }
-    
-    // Only recalculate if values actually changed
-    if (last_offset_position.is_equal_approx(reflection_offset_position) && 
-        last_offset_rotation.is_equal_approx(reflection_offset_rotation)) {
-        return;
-    }
-    
-    Basis offset_basis;
-    offset_basis = offset_basis.rotated(Vector3(1, 0, 0), Math::deg_to_rad(reflection_offset_rotation.x));
-    offset_basis = offset_basis.rotated(Vector3(0, 1, 0), Math::deg_to_rad(reflection_offset_rotation.y));
-    offset_basis = offset_basis.rotated(Vector3(0, 0, 1), Math::deg_to_rad(reflection_offset_rotation.z));
-    
-    cached_offset_transform = Transform3D(offset_basis, reflection_offset_position * reflection_offset_scale);
-    
-    last_offset_position = reflection_offset_position;
-    last_offset_rotation = reflection_offset_rotation;
-}
-
-// bool PlanarReflectorCPP::should_update_reflection(Camera3D *active_cam)
-// {
-//     if (!active_cam || !is_inside_tree()) {
-//         return false;
-//     }
-
-//     Vector3 current_pos = active_cam->get_global_transform().get_origin();
-//     Basis current_basis = active_cam->get_global_transform().get_basis();
-    
-//     // Check if camera moved/rotated enough to warrant update
-//     if (last_camera_position != Vector3()) {
-//         if (current_pos.is_equal_approx(last_camera_position)) {
-//             Vector3 current_euler = current_basis.get_euler();
-//             Vector3 last_euler = last_camera_rotation.get_euler();
-//             if (current_euler.is_equal_approx(last_euler)) {
-//                 return false; // Skip update if camera barely moved
-//             }
-//         }
-//     }
-    
-//     last_camera_position = current_pos;
-//     last_camera_rotation = current_basis;
-    
-//     return true;
-// }
-
-// Performance Helper Methods
-// bool PlanarReflectorCPP::is_material_cache_valid()
-// {
-//     if (!material_cache_valid || !cached_material_pointer) {
-//         return false;
-//     }
-    
-//     // Check if the material pointer is still valid by comparing with current material
-//     if (get_surface_override_material_count() == 0) {
-//         return false;
-//     }
-
-//     Ref<Material> current_material = get_active_material(0);
-//     return current_material.is_valid() && current_material.ptr() == cached_material_pointer;
-// }
-
-// void PlanarReflectorCPP::refresh_material_cache()
-// {
-//     if (!get_mesh().is_valid() || get_surface_override_material_count() == 0) {
-//         cached_material_pointer = nullptr;
-//         material_cache_valid = false;
-//         return;
-//     }
-
-
-//     Ref<Material> material = get_active_material(0);
-//     if (material.is_valid() && Object::cast_to<ShaderMaterial>(material.ptr())) {
-//         cached_material_pointer = Object::cast_to<ShaderMaterial>(material.ptr());
-//         material_cache_valid = true;
-//     } else {
-//         cached_material_pointer = nullptr;
-//         material_cache_valid = false;
-//     }
-// }
-
-// ShaderMaterial* PlanarReflectorCPP::get_cached_material()
-// {
-//     if (is_material_cache_valid()) {
-//         return cached_material_pointer;
-//     }
-//     return nullptr;
-// }
-
-// bool PlanarReflectorCPP::values_equal(Variant a, Variant b)
-// {
-//     if (a == b) {
-//         return true;
-//     }
-    
-//     // Handle Vector3 comparison with tolerance
-//     if (a.get_type() == Variant::VECTOR3 && b.get_type() == Variant::VECTOR3) {
-//         Vector3 vec_a = a;
-//         Vector3 vec_b = b;
-//         return vec_a.is_equal_approx(vec_b);
-//     }
-    
-//     // Handle float comparison with tolerance
-//     if (a.get_type() == Variant::FLOAT && b.get_type() == Variant::FLOAT) {
-//         double float_a = a;
-//         double float_b = b;
-//         return Math::is_equal_approx(float_a, float_b);
-//     }
-    
-//     return false;
-// }
 
 Vector2i PlanarReflectorCPP::get_target_viewport_size()
 {
@@ -719,21 +574,12 @@ Vector2i PlanarReflectorCPP::apply_lod_to_size(Vector2i target_size, Camera3D *a
     return result_size;
 }
 
-void PlanarReflectorCPP::invalidate_all_caches()
-{
-    // material_cache_valid = false;
-    // cached_material_pointer = nullptr;
-    // cached_shader_params.clear();
-    reflection_plane_cache_valid = false;
-    last_viewport_check_frame = -1;
-    // cached_viewport_size = Vector2i(0, 0);
-}
-
 // Public Interface Methods - CRITICAL FOR PLUGIN HELPER
 void PlanarReflectorCPP::set_editor_camera(Camera3D *viewport_camera)
 {
+    UtilityFunctions::print("[PlanarReflectorCPP2] set_editor_camera called");
+
     editor_camera = viewport_camera;
-    // invalidate_all_caches();
     update_reflect_viewport_size();
     set_reflection_camera_transform();
     update_compositor_parameters();
@@ -761,58 +607,10 @@ bool PlanarReflectorCPP::is_planar_reflector_active()
 
 void PlanarReflectorCPP::_exit_tree()
 {
-    // UtilityFunctions::print("[PlanarReflectorCPP2] _exit_tree Started");
-    
     // CRITICAL FIX: Clear shader references FIRST
     clear_shader_texture_references();
-
-    // Force proper cleanup sequence for GDScript compositor effects
-    // if (reflect_camera && reflect_camera->get_compositor().is_valid()) {
-    //     Ref<Compositor> compositor = reflect_camera->get_compositor();
-    //     if (compositor.is_valid()) {
-    //         TypedArray<CompositorEffect> effects = compositor->get_compositor_effects();
-    //         for (int i = 0; i < effects.size(); i++) {
-    //             CompositorEffect* effect = Object::cast_to<CompositorEffect>(effects[i]);
-    //             if (effect && effect->has_method("_free_gpu")) {
-    //                 // Call _free_gpu ONLY if it hasn't been called yet
-    //                 Variant result = effect->call("_free_gpu");
-    //             }
-    //         }
-    //         // Now clear the references
-    //         compositor->set_compositor_effects(TypedArray<CompositorEffect>());
-    //     }
-    //     reflect_camera->set_compositor(Ref<Compositor>());
-    // }
-   
-    // CRITICAL FIX: Stop viewport updates before cleanup
-    // if (reflect_viewport) {
-    //     reflect_viewport->set_update_mode(SubViewport::UPDATE_DISABLED);
-    // }
-    
-    // // Clear compositor references
-    // if (reflect_camera && reflect_camera->get_compositor().is_valid()) {
-    //     reflect_camera->set_compositor(Ref<Compositor>());
-    // }
-    
-    // Wait one frame for cleanup to complete
-    call_deferred("complete_cleanup");
 }
 
-void PlanarReflectorCPP::complete_cleanup()
-{
-    invalidate_all_caches();
-    
-    // Safe viewport cleanup
-    if (reflect_viewport && Object::cast_to<Node>(reflect_viewport)) {
-        if (reflect_viewport->is_inside_tree()) {
-            reflect_viewport->queue_free();
-        }
-    }
-
-    reflect_viewport = nullptr;
-    reflect_camera = nullptr;
-    editor_helper = nullptr;
-}
 
 // Method Bindings
 void PlanarReflectorCPP::_bind_methods() 
@@ -940,7 +738,6 @@ void PlanarReflectorCPP::_bind_methods()
     
     // Method bindings for manual calls (useful for debugging and plugin integration)
     ClassDB::bind_method(D_METHOD("setup_reflection_camera_and_viewport"), &PlanarReflectorCPP::setup_reflection_camera_and_viewport);
-    ClassDB::bind_method(D_METHOD("invalidate_all_caches"), &PlanarReflectorCPP::invalidate_all_caches);
 
     ClassDB::bind_method(D_METHOD("initial_setup"), &PlanarReflectorCPP::initial_setup);
 
@@ -948,13 +745,10 @@ void PlanarReflectorCPP::_bind_methods()
 
     ClassDB::bind_method(D_METHOD("create_viewport_deferred"), &PlanarReflectorCPP::create_viewport_deferred);
     ClassDB::bind_method(D_METHOD("clear_shader_texture_references"), &PlanarReflectorCPP::clear_shader_texture_references);
-    ClassDB::bind_method(D_METHOD("complete_cleanup"), &PlanarReflectorCPP::complete_cleanup);
     ClassDB::bind_method(D_METHOD("finalize_setup"), &PlanarReflectorCPP::finalize_setup);
-
 }
 
 // SETTERS AND GETTERS IMPLEMENTATION
-
 void PlanarReflectorCPP::set_is_active(const bool p_active) { is_active = p_active; }
 bool PlanarReflectorCPP::get_is_active() const { return is_active; }
 
@@ -975,7 +769,6 @@ void PlanarReflectorCPP::set_reflection_camera_resolution(const Vector2i p_resol
     reflection_camera_resolution = p_resolution;
     if (reflect_viewport) {
         reflect_viewport->set_size(reflection_camera_resolution);
-        // cached_viewport_size = reflection_camera_resolution;
     }
 }
 Vector2i PlanarReflectorCPP::get_reflection_camera_resolution() const { return reflection_camera_resolution; }
@@ -1084,28 +877,24 @@ bool PlanarReflectorCPP::get_fill_reflection_experimental() const { return fill_
 void PlanarReflectorCPP::set_enable_reflection_offset(bool p_enable)
 {
     enable_reflection_offset = p_enable;
-    update_offset_cache();
 }
 bool PlanarReflectorCPP::get_enable_reflection_offset() const { return enable_reflection_offset; }
 
 void PlanarReflectorCPP::set_reflection_offset_position(const Vector3 &p_position)
 {
     reflection_offset_position = p_position;
-    update_offset_cache();
 }
 Vector3 PlanarReflectorCPP::get_reflection_offset_position() const { return reflection_offset_position; }
 
 void PlanarReflectorCPP::set_reflection_offset_rotation(const Vector3 &p_rotation)
 {
     reflection_offset_rotation = p_rotation;
-    update_offset_cache();
 }
 Vector3 PlanarReflectorCPP::get_reflection_offset_rotation() const { return reflection_offset_rotation; }
 
 void PlanarReflectorCPP::set_reflection_offset_scale(double p_scale)
 {
     reflection_offset_scale = p_scale;
-    update_offset_cache();
 }
 double PlanarReflectorCPP::get_reflection_offset_scale() const { return reflection_offset_scale; }
 
