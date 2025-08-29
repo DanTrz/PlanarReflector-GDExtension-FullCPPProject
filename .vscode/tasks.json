@@ -7,6 +7,8 @@
             "label": "buildCPP",
             "type": "shell",
             "command": "scons -j12 target=template_debug debug_symbols=yes"
+            //scons -j12 platform=linux target=template_debug debug_symbols=yes //LINUX
+            //scons -j12 platform=macos target=template_debug debug_symbols=yes
         },
         {
             // THIS IS THE NEW TASK FOR YOUR SPECIFIC BUILD COMMAND
