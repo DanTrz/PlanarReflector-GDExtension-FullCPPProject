@@ -50,7 +50,7 @@ namespace godot {
         // Layer and environment control
         int reflection_layers = 1;
         bool use_custom_environment = false;
-        Environment *custom_environment = nullptr;
+        Ref<Environment> custom_environment;
 
         // Reflection Compositor Effects
         // bool use_custom_compositor = false;
@@ -84,9 +84,9 @@ namespace godot {
         // Cached calculations
         Plane cached_reflection_plane = Plane();
         bool is_layer_one_active = true;
-        Transform3D cached_offset_transform = Transform3D();
-        Vector3 last_offset_position = Vector3();
-        Vector3 last_offset_rotation = Vector3();
+        // Transform3D cached_offset_transform = Transform3D();
+        // Vector3 last_offset_position = Vector3();
+        // Vector3 last_offset_rotation = Vector3();
 
         // Performance caches 
         int last_viewport_check_frame = -1;

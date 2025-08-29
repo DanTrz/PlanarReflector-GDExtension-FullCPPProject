@@ -308,23 +308,24 @@ void PlanarReflectorCPP::setup_reflection_environment()
     if (!reflect_camera) {
         return;
     }
-    
-    Ref<Environment> reflection_env;
-    
+
+    // Apply environment to reflection camera
     // Use custom environment if specified
-    if (use_custom_environment && custom_environment) {
-        reflection_env = Ref<Environment>(custom_environment);
+    if (use_custom_environment && custom_environment.is_valid()) {
+        reflect_camera->set_environment(custom_environment);
+        // UtilityFunctions::print("[PlanarReflectorCPP] Camera Reflection -> set using Custom Editor Environment");
     } else {
         // Create default environment optimized for reflections
+        Ref<Environment> reflection_env;
         reflection_env.instantiate();
         reflection_env->set_background(Environment::BG_CLEAR_COLOR);        // Clear background
         reflection_env->set_ambient_source(Environment::AMBIENT_SOURCE_COLOR);  // Use ambient color
         reflection_env->set_ambient_light_color(Color(0.8, 0.8, 0.8));     // Neutral gray
-        reflection_env->set_ambient_light_energy(1.0);                     // Standard intensity
+        reflection_env->set_ambient_light_energy(1.0);     
+        
+        reflect_camera->set_environment(reflection_env);// Standard intensity
+        // UtilityFunctions::print("[PlanarReflectorCPP] Camera Reflection -> set using Default Environment");
     }
-    
-    // Apply environment to reflection camera
-    reflect_camera->set_environment(reflection_env);
 }
 
 /**
@@ -552,12 +553,16 @@ void PlanarReflectorCPP::set_reflection_camera_transform()
     reflection_basis.set_column(1, main_basis.get_column(1).normalized().bounce(n).normalized());  // Up vector
     reflection_basis.set_column(2, main_basis.get_column(2).normalized().bounce(n).normalized());  // Forward vector
     
-    // STEP 4: Combine position and orientation
+    // STEP 4: Combine position and orientation and create base transform
     base_reflection_transform.set_basis(reflection_basis);
+    Transform3D final_reflection_transform = base_reflection_transform;
     
     // STEP 5: Apply any configured offset adjustments
-    Transform3D final_reflection_transform = apply_reflection_offset(base_reflection_transform);
-    
+    if(enable_reflection_offset) 
+    {
+        final_reflection_transform = apply_reflection_offset(base_reflection_transform);
+    }
+        
     // STEP 6: Set the calculated transform on the reflection camera
     reflect_camera->set_global_transform(final_reflection_transform);
     
@@ -668,35 +673,43 @@ void PlanarReflectorCPP::clear_shader_texture_references()
  */
 Transform3D PlanarReflectorCPP::apply_reflection_offset(const Transform3D &base_transform)
 {
-    // Early exit if offsets are disabled
     if (!enable_reflection_offset) {
-        return base_transform;
+        return base_transform;  // Return unmodified base transform
     }
+    
+    // Calculate offset transform directly (no caching needed here)
+    Basis offset_basis;
+    offset_basis = offset_basis.rotated(Vector3(1, 0, 0), Math::deg_to_rad(reflection_offset_rotation.x));
+    offset_basis = offset_basis.rotated(Vector3(0, 1, 0), Math::deg_to_rad(reflection_offset_rotation.y));
+    offset_basis = offset_basis.rotated(Vector3(0, 0, 1), Math::deg_to_rad(reflection_offset_rotation.z));
+    
+    Transform3D offset_transform = Transform3D(offset_basis, reflection_offset_position * reflection_offset_scale);
     
     Transform3D result_transform = base_transform;
     
+    // Apply offset based on blend mode
     switch (offset_blend_mode) {
-        case 0: // Add mode - simple addition of offset
-            result_transform.set_origin(result_transform.get_origin() + cached_offset_transform.get_origin());
+        case 0: // Add mode - simple addition
+            result_transform.set_origin(result_transform.get_origin() + offset_transform.get_origin());
             if (reflection_offset_rotation != Vector3()) {
-                result_transform.set_basis(result_transform.get_basis() * cached_offset_transform.get_basis());
+                result_transform.set_basis(result_transform.get_basis() * offset_transform.get_basis());
             }
             break;
         
-        case 1: // Multiply mode - relative to current transform
-            result_transform = result_transform * cached_offset_transform;
+        case 1: // Multiply mode - transform concatenation
+            result_transform = result_transform * offset_transform;
             break;
         
-        case 2: // Screen space shift mode - offset relative to camera view
+        case 2: // Screen space shift - relative to main camera
             if (main_camera) {
-                Vector3 view_offset = main_camera->get_global_transform().get_basis().xform(cached_offset_transform.get_origin());
+                Vector3 view_offset = main_camera->get_global_transform().get_basis().xform(offset_transform.get_origin());
                 result_transform.set_origin(result_transform.get_origin() + view_offset);
-                result_transform.set_basis(result_transform.get_basis() * cached_offset_transform.get_basis());
+                result_transform.set_basis(result_transform.get_basis() * offset_transform.get_basis());
             }
             break;
     }
     
-    return result_transform;
+    return result_transform;  // Return modified base transform
 }
 
 /**
@@ -1100,15 +1113,20 @@ bool PlanarReflectorCPP::get_use_custom_environment() const { return use_custom_
 
 void PlanarReflectorCPP::set_custom_environment(Environment *p_environment)
 {
-    custom_environment = Object::cast_to<Environment>(p_environment);
-    
+    if (p_environment) {
+        custom_environment = Ref<Environment>(p_environment);
+    } else {
+        custom_environment.unref();  // Properly clear the Ref
+        UtilityFunctions::print("[PlanarReflectorCPP] Editor Environment NOT valid - clearing Custom Environment ");
+    }
+
     // Apply new environment if custom environments are enabled
-    if (use_custom_environment && is_inside_tree()) {
+    if (use_custom_environment && is_inside_tree() && custom_environment.is_valid()) {
         setup_reflection_environment();
     }
 }
 
-Environment* PlanarReflectorCPP::get_custom_environment() const { return custom_environment; }
+Environment* PlanarReflectorCPP::get_custom_environment() const { return custom_environment.ptr(); }
 
 void PlanarReflectorCPP::set_active_compositor(Compositor *p_compositor)
 {
@@ -1124,10 +1142,7 @@ void PlanarReflectorCPP::set_active_compositor(Compositor *p_compositor)
     }
 }
 
-Compositor* PlanarReflectorCPP::get_active_compositor() const 
-{ 
-    return active_compositor.ptr(); 
-}
+Compositor* PlanarReflectorCPP::get_active_compositor() const { return active_compositor.ptr(); }
 
 void PlanarReflectorCPP::set_hide_intersect_reflections(bool p_hide)
 {
