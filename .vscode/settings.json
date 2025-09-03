@@ -1,6 +1,6 @@
 {
     "cmake.sourceDirectory": "C:/Local Documents/Development/Godot/Godot Projects/PlanarReflector GDExtension/godot-cpp",
-    "workbench.colorTheme": "Dracula Theme",
+    "workbench.colorTheme": "Godot",
     "files.associations": {
         "set": "cpp",
         "array": "cpp",
