@@ -5,7 +5,8 @@
     "version": "0.2.0",
     "configurations": [ 
         {
-            "name": "Build/Run with Debugger",
+            //RUN GODOT PROJECT FROM THE MAIN SCENE WITH CPP DEBUGGER
+            "name": "Cpp Main Debug",
             "type": "cppvsdbg",
             "request": "launch",
             "preLaunchTask": "buildCPP",
@@ -15,7 +16,7 @@
             "console": "integratedTerminal",
             "stopAtEntry": false
         }, //"C:\Local Documents\Development\Godot\Godot Projects\PlanarReflector-GDExtension\PlanarReflector-CPP"
-               {
+        {
             // --- THIS IS YOUR NEW 'BUILD ONLY' CONFIGURATION ---
             "name": "SCons Build Only",
             "type": "cppdbg",
@@ -25,7 +26,18 @@
             "args": ["/C", "echo Build task finished."], // The /C tells cmd to run the command and then terminate
             "cwd": "${workspaceFolder}",
             "internalConsoleOptions": "neverOpen" // Keeps the terminal clean
-        }
+        },
+        {   //RUN GODOT PROJECT FROM THE MAIN SCENE WITH GDSCRIPT DEBUGGER
+            "name": "GD Main Debug",
+            "type": "godot",
+            "request": "launch",
+            "project": "C:\\Local Documents\\Development\\Godot\\Godot Projects\\PlanarReflector-GDExtension\\PlanarReflector-CPP",
+            "debug_collisions": false,
+            "debug_paths": false,
+            "debug_navigation": false,
+            "scene": "main",
+            "additional_options": "",
+        },
         
     ]
 }
