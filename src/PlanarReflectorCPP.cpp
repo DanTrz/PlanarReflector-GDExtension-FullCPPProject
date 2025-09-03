@@ -392,7 +392,9 @@ void PlanarReflectorCPP::setup_compositor_reflection_effect(Camera3D *reflect_ca
 Ref<Compositor> PlanarReflectorCPP::create_new_compositor() 
 {
     // Load the pre-configured reflection compositor resource
-    Variant loaded_resource = ResourceLoader::get_singleton()->load("res://addons/PlanarReflectorCpp/SupportFiles/reflection_compositor.tres");
+    Variant loaded_resource = ResourceLoader::get_singleton()->load("uid://cvhrerf6uw7tk"); //file: reflection_compositor.tres
+    
+    // Variant loaded_resource = ResourceLoader::get_singleton()->load("res://addons/PlanarReflectorCpp/SupportFiles/reflection_compositor.tres");
     
     if (loaded_resource.get_type() == Variant::OBJECT) 
     {
