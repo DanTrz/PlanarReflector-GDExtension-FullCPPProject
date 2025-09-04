@@ -290,8 +290,15 @@ void PlanarReflectorCPP::create_viewport_deferred()
     setup_reflection_environment();
     
     // Setup compositor effects for advanced reflection features
-    if (reflect_camera) {
+    if (reflect_camera && use_compositor_effect) {
         call_deferred("setup_compositor_reflection_effect", reflect_camera);
+    }
+    else
+    {
+        // UtilityFunctions::print("[PlanarReflectorCPP] Camera Reflection -> not using compositor effect");
+        active_compositor.unref();
+        active_compositor = Ref<Compositor>();
+        
     }
 }
 
@@ -358,7 +365,7 @@ void PlanarReflectorCPP::find_editor_helper()
  */
 void PlanarReflectorCPP::setup_compositor_reflection_effect(Camera3D *reflect_cam) 
 {
-    if (!reflect_cam) {
+    if (!reflect_cam || !use_compositor_effect) {
         return;
     }
     
@@ -391,25 +398,27 @@ void PlanarReflectorCPP::setup_compositor_reflection_effect(Camera3D *reflect_ca
  */
 Ref<Compositor> PlanarReflectorCPP::create_new_compositor() 
 {
-    // Load the pre-configured reflection compositor resource
-    Variant loaded_resource = ResourceLoader::get_singleton()->load("uid://cvhrerf6uw7tk"); //file: reflection_compositor.tres
-    
-    // Variant loaded_resource = ResourceLoader::get_singleton()->load("res://addons/PlanarReflectorCpp/SupportFiles/reflection_compositor.tres");
-    
-    if (loaded_resource.get_type() == Variant::OBJECT) 
+    if(!use_compositor_effect)
     {
-        // CRITICAL: Create a unique copy using duplicate(true) for deep copy
-        // This ensures each camera gets its own effect instance
-        Ref<Resource> resource_ref = loaded_resource;
-        if (resource_ref.is_valid()) 
-        {
-            Ref<Resource> unique_copy = resource_ref->duplicate(true); // Deep copy
-            Ref<Compositor> compositor = Object::cast_to<Compositor>(unique_copy.ptr());
-            return compositor;
-        }
+        active_compositor = Ref<Compositor>(); 
+        return Ref<Compositor>();
+    }
+        
+    // Try UID first, fallback to path
+    Ref<Resource> loaded_resource = ResourceLoader::get_singleton()->load("uid://cvhrerf6uw7tk");
+    if (!loaded_resource.is_valid())
+    {
+        loaded_resource = ResourceLoader::get_singleton()->load("res://addons/PlanarReflectorCpp/SupportFiles/Compositor/reflection_compositor.tres");
+    }
+    
+    if (loaded_resource.is_valid()) 
+    {
+        // Create unique copy for this camera instance
+        Ref<Resource> unique_copy = loaded_resource->duplicate(true);
+        Ref<Compositor> compositor = Object::cast_to<Compositor>(unique_copy.ptr());
+        return compositor;
     } 
 
-    // Return empty compositor if loading fails
     return Ref<Compositor>();
 }
 
@@ -423,7 +432,7 @@ Ref<Compositor> PlanarReflectorCPP::create_new_compositor()
  */
 void PlanarReflectorCPP::update_compositor_parameters()
 {
-    if (!active_compositor.is_valid()) return;
+    if (!active_compositor.is_valid() || !use_compositor_effect) return;
     
     // Get the first compositor effect (our reflection effect)
     TypedArray<CompositorEffect> effects = active_compositor->get_compositor_effects();
@@ -525,7 +534,7 @@ void PlanarReflectorCPP::set_reflection_camera_transform()
     // Validate required cameras exist
     Camera3D *active_camera = get_active_camera();
     if (!active_camera || !reflect_camera) {
-        UtilityFunctions::print("[PlanarReflectorCPP] Info: MIssing Camera or Reflect Camera not loaded. Reflections will not show.");
+        UtilityFunctions::print("[PlanarReflectorCPP] Info: Missing Camera or Reflect Camera not loaded. Reflections will not show. Reload the scene to update the Planar Reflector.");
         return;
     }
         
@@ -607,7 +616,7 @@ void PlanarReflectorCPP::update_shader_parameters()
     if(reflection_texture.is_null() || reflection_texture.is_valid() == false || 
        reflection_texture->get_size() != reflect_viewport->get_size())
     {
-        UtilityFunctions::print("[PlanarReflectorCPP] ERROR: update_shader_parameters - No valid texture found");
+        UtilityFunctions::print("[PlanarReflectorCPP] ERROR: update_shader_parameters - No valid texture found. Please reload the scene to update the Planar Reflector.");
     }
     
     // Update all shader parameters for reflection rendering
@@ -911,6 +920,11 @@ void PlanarReflectorCPP::_bind_methods()
 
     // === REFLECTION COMPOSITOR EFFECTS GROUP ===
     ADD_GROUP("Reflection Compositor Effects", "");
+
+    // use_compositor_effects - Controls whether reflection post-processing effects are used
+    ClassDB::bind_method(D_METHOD("set_use_compositor_effect", "p_use_compositor"), &PlanarReflectorCPP::set_use_compositor_effect);
+    ClassDB::bind_method(D_METHOD("get_use_compositor_effect"), &PlanarReflectorCPP::get_use_compositor_effect);
+    ADD_PROPERTY(PropertyInfo(Variant::BOOL, "use_compositor_effect", PROPERTY_HINT_NONE, "Enable reflection post-processing effects. Hide geometry that intersects the reflection plane for more realistic reflections"), "set_use_compositor_effect", "get_use_compositor_effect");
     
     // Active compositor - The Compositor resource containing reflection effects
     ClassDB::bind_method(D_METHOD("set_active_compositor", "p_compositor"), &PlanarReflectorCPP::set_active_compositor);
@@ -1139,12 +1153,28 @@ void PlanarReflectorCPP::set_active_compositor(Compositor *p_compositor)
     }
     
     // Apply compositor immediately if reflection system is ready
-    if (reflect_camera && is_inside_tree()) {
+    if (reflect_camera && is_inside_tree() && use_compositor_effect) {
         setup_compositor_reflection_effect(reflect_camera);
     }
 }
 
 Compositor* PlanarReflectorCPP::get_active_compositor() const { return active_compositor.ptr(); }
+
+void PlanarReflectorCPP::set_use_compositor_effect(bool p_use_compositor)
+{
+    use_compositor_effect = p_use_compositor;
+    UtilityFunctions::print("[PlanarReflectorCPP] Info: Reload the Scene to apply changes to the compositor effect.");
+    if(!p_use_compositor)
+    {
+        active_compositor = Ref<Compositor>(); // Reset active_compositor to empt
+    }
+    // Update compositor effect parameters immediately
+    if (reflect_camera && is_inside_tree()) {
+        update_compositor_parameters();
+    }
+}
+
+bool PlanarReflectorCPP::get_use_compositor_effect() const { return use_compositor_effect; }
 
 void PlanarReflectorCPP::set_hide_intersect_reflections(bool p_hide)
 {

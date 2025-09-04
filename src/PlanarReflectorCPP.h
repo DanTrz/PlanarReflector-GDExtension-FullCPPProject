@@ -55,10 +55,12 @@ namespace godot {
         // Reflection Compositor Effects
         // bool use_custom_compositor = false;
         Ref<Compositor> active_compositor;
+        bool use_compositor_effect = true;
         bool hide_intersect_reflections = true;
         bool override_YAxis_height = false;
         double new_YAxis_height = 0.0;
         bool fill_reflection_experimental = false;
+
 
         // Reflection Offset Controls
         bool enable_reflection_offset = false;
@@ -183,6 +185,9 @@ namespace godot {
 
         void set_active_compositor(Compositor *p_compositor);
         Compositor *get_active_compositor() const;
+
+        void set_use_compositor_effect(bool p_use_compositor);
+        bool get_use_compositor_effect() const;
 
         void set_hide_intersect_reflections(bool p_hide);
         bool get_hide_intersect_reflections() const;
