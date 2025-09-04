@@ -9,6 +9,7 @@
             "command": "scons -j12 target=template_debug debug_symbols=yes use_hot_reload=true"
             //scons -j12 platform=linux target=template_debug debug_symbols=yes //LINUX
             //scons -j12 platform=macos target=template_debug debug_symbols=yes
+            //scons platform=macos osxcross_sdk=darwin23.5
         },
         {
             // THIS IS THE NEW TASK FOR YOUR SPECIFIC BUILD COMMAND
