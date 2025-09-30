@@ -145,7 +145,6 @@ void PlanarReflectorCPP::initial_setup()
     // CRITICAL: Ensure we're properly in the scene tree before creating children
     // This prevents crashes from adding nodes before the tree is ready
     if (!is_inside_tree()) {
-        call_deferred("initial_setup");  // Retry next frame
         return;
     }
 
