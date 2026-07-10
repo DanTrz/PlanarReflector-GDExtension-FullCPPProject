@@ -2,6 +2,7 @@
 
 //Include the other headers you want to register with Godot
 #include "PlanarReflectorCPP.h"
+#include "PlanarReflectorClippingCPP.h"
 
 
 //your Godot and GDExtensions base classes
@@ -22,6 +23,13 @@ void initialize_planar_reflector_types(ModuleInitializationLevel p_level)
 
     // Register classes
     ClassDB::register_class<PlanarReflectorCPP>();
+    ClassDB::register_class<PlanarReflectorClippingCPP>();
+
+    // The clipping global uniforms must exist before any scene shader that
+    // references them compiles, so they are created here at module init, not by
+    // the nodes. Project-defined globals (Project Settings > shader_globals) are
+    // respected and never overwritten.
+    PlanarReflectorClippingCPP::ensure_global_shader_parameters();
 
     
     // UtilityFunctions::print("Both PlanarReflectorCPP and ReflectionEffectPrePass registered at SCENE level");
