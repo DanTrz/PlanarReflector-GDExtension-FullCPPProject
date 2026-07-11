@@ -2,7 +2,6 @@
 #define PLANAR_REFLECTOR_CLIPPING_CPP_H
 
 #include <godot_cpp/classes/camera3d.hpp>
-#include <godot_cpp/classes/compositor.hpp>
 #include <godot_cpp/classes/environment.hpp>
 #include <godot_cpp/classes/mesh_instance3d.hpp>
 #include <godot_cpp/classes/shader_material.hpp>
@@ -21,12 +20,16 @@ class PlanarReflectorClippingCPP : public MeshInstance3D {
     GDCLASS(PlanarReflectorClippingCPP, MeshInstance3D)
 
 private:
-    // Single global water clipping owner per process. Handoff is event-driven:
-    // clipping-enabled reflectors register in ownership_candidates at setup and the
-    // release event grants ownership to the first remaining candidate (req 11.6/11.7).
-    static PlanarReflectorClippingCPP *global_water_owner;
+    // All enabled clipping reflectors share these last-write-wins values. The
+    // participant list is used only for event-driven camera refresh and diagnostics.
+    static PlanarReflectorClippingCPP *last_height_writer;
+    static PlanarReflectorClippingCPP *last_marker_writer;
     static bool global_parameters_initialized;
-    static Vector<PlanarReflectorClippingCPP *> ownership_candidates;
+    static Vector<PlanarReflectorClippingCPP *> clipping_participants;
+    static double shared_water_height;
+    static uint32_t shared_marker_bit;
+    static bool shared_height_initialized;
+    static bool shared_marker_initialized;
     static constexpr const char *WATER_HEIGHT_GLOBAL = "planar_water_height";
     static constexpr const char *CAMERA_BIT_GLOBAL = "planar_reflection_camera_bit";
 
@@ -51,7 +54,6 @@ private:
 
     bool use_custom_environment = false;
     Ref<Environment> custom_environment;
-    Ref<Compositor> active_compositor;
 
     bool enable_reflection_offset = false;
     Vector3 reflection_offset_position;
@@ -67,7 +69,8 @@ private:
     int frame_counter = 0;
     int setup_generation = 0;
     bool setup_complete = false;
-    double last_published_height = 1.0e30;
+    bool observed_world_y_valid = false;
+    double observed_world_y = 0.0;
     Vector2i last_viewport_size;
     Ref<ShaderMaterial> bound_reflector_material;
     bool editor_texture_binding_suspended = false;
@@ -88,7 +91,6 @@ private:
     // Diagnostic state (req 16.4/16.5) - set on events, read by configuration warnings.
     bool global_parameter_conflict = false;
     bool global_conflict_warned = false;
-    bool ownership_conflict_warned = false;
     bool missing_camera_warned = false;
 
     void schedule_setup();
@@ -121,12 +123,11 @@ private:
     Transform3D apply_reflection_offset_to(const Transform3D &p_transform) const;
 
     bool ensure_global_parameters();
-    void register_ownership_candidate();
-    void unregister_ownership_candidate();
-    bool acquire_global_water_ownership();
-    void release_global_water_ownership();
-    void publish_global_values(bool p_force = false);
-    bool owns_global_water() const;
+    void register_clipping_participant();
+    void unregister_clipping_participant();
+    void publish_global_height(bool p_force = false);
+    void publish_global_marker(bool p_force = false);
+    static void refresh_participant_cameras_and_warnings();
 
 protected:
     static void _bind_methods();
@@ -177,9 +178,6 @@ public:
     bool get_use_custom_environment() const;
     void set_custom_environment(Environment *p_environment);
     Environment *get_custom_environment() const;
-    void set_active_compositor(Compositor *p_compositor);
-    Compositor *get_active_compositor() const;
-
     void set_enable_reflection_offset(bool p_value);
     bool get_enable_reflection_offset() const;
     void set_reflection_offset_position(Vector3 p_value);

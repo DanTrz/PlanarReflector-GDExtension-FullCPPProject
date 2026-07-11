@@ -16,6 +16,15 @@ legacy idioms, wrong editor-camera design, and still missed requirements.
 of the legacy `src/PlanarReflectorCPP.cpp`. No new service classes, no new source files, no
 state machine.**
 
+## Superseding shared-global decision
+
+This section supersedes every ownership/authority/handoff reference later in this historical
+plan. There is no clipping owner. Every enabled `PlanarReflectorClippingCPP` remains clipped.
+Moving any reflector publishes its world Y as the shared height; changing any marker publishes
+the shared marker. The most recent relevant modification wins. A static participant list exists
+only for event-driven camera-mask refresh and diagnostics. Differing local values produce an
+explanatory warning and never demote a node to an unclipped reflector.
+
 ## Approach
 
 Refine the existing `PlanarReflectorClippingCPP` **in place**. Architecture stays exactly as

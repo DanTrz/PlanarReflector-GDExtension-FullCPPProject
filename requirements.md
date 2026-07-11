@@ -33,7 +33,7 @@
 4.2. The clipping height comes from the authoritative reflector's world Y position.
 4.3. Tilted clipping planes are out of scope for the initial implementation.
 4.4. Simultaneous clipping at several water heights is out of scope.
-4.5. Several reflector nodes may exist, but only one may control global clipping.
+4.5. Several clipping reflector nodes may exist and all must use the same shared global clipping values.
 
 ## 5. Global shader parameters
 
@@ -42,8 +42,8 @@
 5.3. The marker bit must be configurable per project.
 5.4. The clipping bias may be hardcoded in the shader include.
 5.5. Global values must not be updated per material.
-5.6. Water height must be published only when the authoritative reflector's Y position changes.
-5.7. The marker must be published only when its configuration changes.
+5.6. Moving any enabled clipping reflector publishes its world Y as the shared water height; the last modified reflector wins.
+5.7. Changing any enabled clipping reflector's marker publishes it as the shared marker; the last modified setting wins.
 5.8. Global-uniform definitions and types must not be repeatedly validated during normal frames.
 
 ## 6. Compatible shader materials
@@ -93,15 +93,15 @@
 10.5. Runtime scene changes must cleanly destroy old reflection resources.
 10.6. Exported projects must work without editor-only dependencies.
 
-## 11. Multiple reflectors and global ownership
+## 11. Multiple reflectors and shared globals
 
 11.1. Every reflector must own a separate `SubViewport`, reflection camera, and texture binding.
-11.2. Only one reflector may own the global clipping height and camera marker.
-11.3. A second ownership request must not overwrite the current owner.
-11.4. Ownership conflicts must produce a clear configuration warning.
-11.5. Non-owning reflectors must continue as ordinary unclipped planar reflectors.
-11.6. Ownership must be released when its owner is disabled, exits the tree, or is deleted.
-11.7. Ownership transfer must be deterministic.
+11.2. Every enabled clipping reflector must receive the shared camera marker and remain clipped.
+11.3. Any enabled clipping reflector may update the shared height or marker through its relevant property/transform change.
+11.4. Shared values use last-write-wins semantics without an owner election or authority node.
+11.5. Reflectors at a different Y from the current shared height must remain clipped and receive a clear explanatory warning.
+11.6. Reflectors whose local marker setting differs from the current shared marker must remain clipped and receive a clear explanatory warning.
+11.7. Disabling or deleting the last writer must not disable clipping on the remaining reflectors.
 
 ## 12. Performance requirements
 
@@ -129,7 +129,7 @@
 14.2. Main-camera selection.
 14.3. Reflection layer mask.
 14.4. Perspective/Orthogonal matching and Orthogonal scale control.
-14.5. Custom environment and optional compositor assignment.
+14.5. Custom environment assignment.
 14.6. Reflection position and rotation offsets.
 14.7. Offset scale and blend mode.
 14.8. Update frequency.
@@ -143,7 +143,7 @@
 15.2. Runtime nodes must be created once per reflector instance.
 15.3. Rendering must be disabled before teardown.
 15.4. Texture references must be cleared before destroying the `SubViewport`.
-15.5. Global ownership must be released during teardown.
+15.5. The reflector must unregister from shared clipping diagnostics during teardown.
 15.6. Camera and world references must be cleared safely.
 15.7. Runtime nodes must be freed exactly once.
 15.8. Deferred callbacks must not operate on exited or destroyed nodes.
@@ -156,7 +156,7 @@
 16.2. Warn when the reflector material is missing or incompatible.
 16.3. Warn when the runtime main camera is missing.
 16.4. Warn when global shader parameters have conflicting types.
-16.5. Warn when multiple reflectors request global ownership.
+16.5. Warn when reflector heights or marker settings disagree with the current shared last-written values.
 16.6. Warn when the configured marker layer is invalid or conflicts with documented project use.
 16.7. Warnings must not depend on expensive continuous scans.
 
@@ -170,7 +170,7 @@
 17.6. Test unsupported objects fully above, crossing, and fully below water.
 17.7. Test overlapping compatible and unsupported objects.
 17.8. Test enabling, disabling, deleting, and reparenting reflectors.
-17.9. Test global-owner deletion, release, and deterministic handoff.
+17.9. Test last-write-wins height/marker updates and deletion of the most recent writer.
 17.10. Test scene reloads and runtime scene transitions.
 17.11. Measure CPU and GPU performance, including the no-reflector and inactive-reflector cases.
 17.12. Confirm no stale camera, world, texture, RID, or viewport survives scene changes.
@@ -180,6 +180,6 @@
 
 18.1. Legacy and clipping reflector responsibilities must have clear, documented ownership.
 18.2. The new implementation must not rely on patchwork duplicate initialization paths.
-18.3. Camera acquisition, reflection rendering, global ownership, and teardown must each have a single authoritative flow.
+18.3. Camera acquisition, reflection rendering, shared-global publication, and teardown must each have a single authoritative flow.
 18.4. Any editor plugin or helper must exist only where verified Godot lifecycle evidence demonstrates it is required.
 18.5. The final design must prioritize deterministic behaviour, separation of concerns, scalability, and observable failure diagnostics.
