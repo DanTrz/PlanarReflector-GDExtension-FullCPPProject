@@ -20,10 +20,11 @@ state machine.**
 
 This section supersedes every ownership/authority/handoff reference later in this historical
 plan. There is no clipping owner. Every enabled `PlanarReflectorClippingCPP` remains clipped.
-Moving any reflector publishes its world Y as the shared height; changing any marker publishes
-the shared marker. The most recent relevant modification wins. A static participant list exists
-only for event-driven camera-mask refresh and diagnostics. Differing local values produce an
-explanatory warning and never demote a node to an unclipped reflector.
+A static ObjectID registry selects the closest reflector whose world-space mesh bounds intersect
+the active source-camera frustum; that node's world Y becomes the shared height. Selection uses
+hysteresis and recalculates only when registered state or cached camera state changes. Changing
+any marker publishes the shared marker. Differing local values produce an explanatory warning
+and never demote a node to an unclipped reflector.
 
 ## Approach
 
@@ -52,9 +53,9 @@ started:
   checks, no polling anywhere. The destructor also clears owner/list entries as a last-resort
   guard.
 - Shader opt-in stays the existing 3-file package:
-  `planar_reflection_clip.gdshaderinc` (already correct — global uniforms + one `discard`
-  function), `planar_reflection_clip_example.gdshader`,
-  `planar_reflection_clipping_surface.gdshader` (already has water_color / alpha /
+  `planar_reflection_clip_object.gdshaderinc` (already correct — global uniforms + one `discard`
+  function), `planar_reflection_clip_object_example.gdshader`,
+  `planar_reflection_clip_surface.gdshader` (already has water_color / alpha /
   reflection_strength uniforms per req 8.1).
 
 ## Changes
@@ -195,7 +196,7 @@ Create `PlanarReflector-CPP/addons/PlanarReflectorCpp/SupportFiles/Shaders/PLANA
   `planar_reflection_clip(CAMERA_VISIBLE_LAYERS, CAMERA_POSITION_WORLD, world_position)`
   in `fragment()`, with the `(INV_VIEW_MATRIX * vec4(VERTEX,1.0)).xyz` world-position snippet.
 - Copy-paste examples for PBR, toon, and emission shaders (the existing
-  `planar_reflection_clip_example.gdshader` is the base).
+  `planar_reflection_clip_object_example.gdshader` is the base).
 - Notes: unsupported materials keep full traditional reflections; one clipping owner per
   project; marker layer setup; give each reflector its own surface-material instance
   (or `resource_local_to_scene`) so instances don't overwrite each other (req 8.4).
@@ -205,7 +206,7 @@ Create `PlanarReflector-CPP/addons/PlanarReflectorCpp/SupportFiles/Shaders/PLANA
 - `src/PlanarReflectorCPP.cpp/.h` — untouched (req 1.1).
 - `src/register_types.cpp` — already registers both classes; fine as is.
 - `planar_reflector_editor_helper.gd` — untouched.
-- `planar_reflection_clip.gdshaderinc` — already matches req 5.1/5.2/5.4 exactly.
+- `planar_reflection_clip_object.gdshaderinc` — already matches req 5.1/5.2/5.4 exactly.
 - `bin/PlanarReflectorCpp.gdextension` — already has both icons.
 
 ## Requirements traceability matrix

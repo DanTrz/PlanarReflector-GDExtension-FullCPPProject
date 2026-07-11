@@ -41,7 +41,7 @@ void unitialize_planar_reflector_types(ModuleInitializationLevel p_level)
     {
         return;
     }
-    // Cleanup both classes
+    PlanarReflectorClippingCPP::shutdown_shared_manager();
 }
 
 extern "C" {

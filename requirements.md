@@ -42,7 +42,7 @@
 5.3. The marker bit must be configurable per project.
 5.4. The clipping bias may be hardcoded in the shader include.
 5.5. Global values must not be updated per material.
-5.6. Moving any enabled clipping reflector publishes its world Y as the shared water height; the last modified reflector wins.
+5.6. The shared manager publishes the world Y of the closest enabled reflector whose world-space mesh bounds intersect the active source camera frustum.
 5.7. Changing any enabled clipping reflector's marker publishes it as the shared marker; the last modified setting wins.
 5.8. Global-uniform definitions and types must not be repeatedly validated during normal frames.
 
@@ -97,11 +97,11 @@
 
 11.1. Every reflector must own a separate `SubViewport`, reflection camera, and texture binding.
 11.2. Every enabled clipping reflector must receive the shared camera marker and remain clipped.
-11.3. Any enabled clipping reflector may update the shared height or marker through its relevant property/transform change.
-11.4. Shared values use last-write-wins semantics without an owner election or authority node.
-11.5. Reflectors at a different Y from the current shared height must remain clipped and receive a clear explanatory warning.
+11.3. Height selection is resolved centrally from registered, valid, in-tree reflector ObjectIDs; no reflector owns the global value.
+11.4. The shared height uses nearest-in-frustum selection with hysteresis; the shared marker retains last-modified semantics.
+11.5. Reflectors at a different Y from the selected shared height must remain clipped and receive a clear explanatory warning.
 11.6. Reflectors whose local marker setting differs from the current shared marker must remain clipped and receive a clear explanatory warning.
-11.7. Disabling or deleting the last writer must not disable clipping on the remaining reflectors.
+11.7. Disabling, removing, or queue-freeing the selected reflector must safely trigger reselection without disabling remaining reflectors.
 
 ## 12. Performance requirements
 
@@ -156,7 +156,7 @@
 16.2. Warn when the reflector material is missing or incompatible.
 16.3. Warn when the runtime main camera is missing.
 16.4. Warn when global shader parameters have conflicting types.
-16.5. Warn when reflector heights or marker settings disagree with the current shared last-written values.
+16.5. Warn when reflector heights differ from the camera-selected shared height or marker settings differ from the shared marker.
 16.6. Warn when the configured marker layer is invalid or conflicts with documented project use.
 16.7. Warnings must not depend on expensive continuous scans.
 
@@ -170,7 +170,7 @@
 17.6. Test unsupported objects fully above, crossing, and fully below water.
 17.7. Test overlapping compatible and unsupported objects.
 17.8. Test enabling, disabling, deleting, and reparenting reflectors.
-17.9. Test last-write-wins height/marker updates and deletion of the most recent writer.
+17.9. Test nearest-in-frustum height selection, hysteresis, marker updates, and deletion/queue-free of registered reflectors.
 17.10. Test scene reloads and runtime scene transitions.
 17.11. Measure CPU and GPU performance, including the no-reflector and inactive-reflector cases.
 17.12. Confirm no stale camera, world, texture, RID, or viewport survives scene changes.

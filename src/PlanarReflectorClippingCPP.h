@@ -8,6 +8,7 @@
 #include <godot_cpp/classes/sub_viewport.hpp>
 #include <godot_cpp/core/object_id.hpp>
 #include <godot_cpp/templates/vector.hpp>
+#include <godot_cpp/variant/aabb.hpp>
 #include <godot_cpp/variant/basis.hpp>
 #include <godot_cpp/variant/packed_string_array.hpp>
 #include <godot_cpp/variant/string_name.hpp>
@@ -20,16 +21,33 @@ class PlanarReflectorClippingCPP : public MeshInstance3D {
     GDCLASS(PlanarReflectorClippingCPP, MeshInstance3D)
 
 private:
-    // All enabled clipping reflectors share these last-write-wins values. The
-    // participant list is used only for event-driven camera refresh and diagnostics.
-    static PlanarReflectorClippingCPP *last_height_writer;
-    static PlanarReflectorClippingCPP *last_marker_writer;
+    // All enabled clipping reflectors share one camera-selected height and one
+    // last-modified marker. The ObjectID registry never owns node lifetimes.
+    static ObjectID last_height_writer_id;
+    static ObjectID last_marker_writer_id;
     static bool global_parameters_initialized;
-    static Vector<PlanarReflectorClippingCPP *> clipping_participants;
+    static Vector<ObjectID> clipping_participants;
     static double shared_water_height;
     static uint32_t shared_marker_bit;
     static bool shared_height_initialized;
     static bool shared_marker_initialized;
+    static ObjectID selected_reflector_id;
+    static uint64_t last_selection_frame;
+    static bool selection_dirty;
+    static bool selection_camera_cache_valid;
+    static ObjectID selection_camera_id;
+    static Transform3D selection_camera_transform;
+    static int selection_camera_projection;
+    static double selection_camera_fov;
+    static double selection_camera_size;
+    static double selection_camera_near;
+    static double selection_camera_far;
+    static double selection_camera_h_offset;
+    static double selection_camera_v_offset;
+    static Vector2 selection_camera_frustum_offset;
+    static int selection_camera_keep_aspect;
+    static uint32_t selection_camera_cull_mask;
+    static Vector2i selection_camera_viewport_size;
     static constexpr const char *WATER_HEIGHT_GLOBAL = "planar_water_height";
     static constexpr const char *CAMERA_BIT_GLOBAL = "planar_reflection_camera_bit";
 
@@ -41,6 +59,7 @@ private:
 
     bool is_active = true;
     bool global_water_clipping_enabled = false;
+    bool debug_selection_diagnostics = false;
     int reflection_camera_marker_layer = 20;
     int reflection_layers = 1;
 
@@ -69,8 +88,6 @@ private:
     int frame_counter = 0;
     int setup_generation = 0;
     bool setup_complete = false;
-    bool observed_world_y_valid = false;
-    double observed_world_y = 0.0;
     Vector2i last_viewport_size;
     Ref<ShaderMaterial> bound_reflector_material;
     bool editor_texture_binding_suspended = false;
@@ -128,6 +145,11 @@ private:
     void publish_global_height(bool p_force = false);
     void publish_global_marker(bool p_force = false);
     static void refresh_participant_cameras_and_warnings();
+    static void update_active_reflector_selection(Camera3D *p_source_camera, bool p_force = false);
+    static bool aabb_intersects_camera_frustum(const AABB &p_world_aabb, Camera3D *p_camera);
+    static double distance_squared_to_aabb(const Vector3 &p_point, const AABB &p_aabb);
+    static bool is_selection_debug_enabled();
+    static void update_selection_debug_visuals();
 
 protected:
     static void _bind_methods();
@@ -137,6 +159,7 @@ public:
     // uniforms must exist before any scene shader that references them compiles,
     // which is long before any node's setup runs.
     static void ensure_global_shader_parameters();
+    static void shutdown_shared_manager();
 
     PlanarReflectorClippingCPP();
     ~PlanarReflectorClippingCPP();
@@ -153,6 +176,8 @@ public:
 
     void set_global_water_clipping_enabled(bool p_value);
     bool get_global_water_clipping_enabled() const;
+    void set_debug_selection_diagnostics(bool p_value);
+    bool get_debug_selection_diagnostics() const;
     void set_reflection_camera_marker_layer(int p_layer);
     int get_reflection_camera_marker_layer() const;
 

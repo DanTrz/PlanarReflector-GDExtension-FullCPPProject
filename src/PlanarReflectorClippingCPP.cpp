@@ -19,14 +19,31 @@
 
 using namespace godot;
 
-PlanarReflectorClippingCPP *PlanarReflectorClippingCPP::last_height_writer = nullptr;
-PlanarReflectorClippingCPP *PlanarReflectorClippingCPP::last_marker_writer = nullptr;
+ObjectID PlanarReflectorClippingCPP::last_height_writer_id;
+ObjectID PlanarReflectorClippingCPP::last_marker_writer_id;
 bool PlanarReflectorClippingCPP::global_parameters_initialized = false;
-Vector<PlanarReflectorClippingCPP *> PlanarReflectorClippingCPP::clipping_participants;
+Vector<ObjectID> PlanarReflectorClippingCPP::clipping_participants;
 double PlanarReflectorClippingCPP::shared_water_height = 0.0;
 uint32_t PlanarReflectorClippingCPP::shared_marker_bit = uint32_t(1) << 19;
 bool PlanarReflectorClippingCPP::shared_height_initialized = false;
 bool PlanarReflectorClippingCPP::shared_marker_initialized = false;
+ObjectID PlanarReflectorClippingCPP::selected_reflector_id;
+uint64_t PlanarReflectorClippingCPP::last_selection_frame = uint64_t(-1);
+bool PlanarReflectorClippingCPP::selection_dirty = true;
+bool PlanarReflectorClippingCPP::selection_camera_cache_valid = false;
+ObjectID PlanarReflectorClippingCPP::selection_camera_id;
+Transform3D PlanarReflectorClippingCPP::selection_camera_transform;
+int PlanarReflectorClippingCPP::selection_camera_projection = -1;
+double PlanarReflectorClippingCPP::selection_camera_fov = 0.0;
+double PlanarReflectorClippingCPP::selection_camera_size = 0.0;
+double PlanarReflectorClippingCPP::selection_camera_near = 0.0;
+double PlanarReflectorClippingCPP::selection_camera_far = 0.0;
+double PlanarReflectorClippingCPP::selection_camera_h_offset = 0.0;
+double PlanarReflectorClippingCPP::selection_camera_v_offset = 0.0;
+Vector2 PlanarReflectorClippingCPP::selection_camera_frustum_offset;
+int PlanarReflectorClippingCPP::selection_camera_keep_aspect = -1;
+uint32_t PlanarReflectorClippingCPP::selection_camera_cull_mask = 0;
+Vector2i PlanarReflectorClippingCPP::selection_camera_viewport_size;
 
 PlanarReflectorClippingCPP::PlanarReflectorClippingCPP() {
     // Processing is enabled only after a successful setup (apply_activity_state).
@@ -35,13 +52,18 @@ PlanarReflectorClippingCPP::PlanarReflectorClippingCPP() {
 }
 
 PlanarReflectorClippingCPP::~PlanarReflectorClippingCPP() {
-    clipping_participants.erase(this);
-    if (last_height_writer == this) {
-        last_height_writer = nullptr;
+    const ObjectID id(get_instance_id());
+    clipping_participants.erase(id);
+    if (last_height_writer_id == id) {
+        last_height_writer_id = ObjectID();
     }
-    if (last_marker_writer == this) {
-        last_marker_writer = nullptr;
+    if (last_marker_writer_id == id) {
+        last_marker_writer_id = ObjectID();
     }
+    if (selected_reflector_id == id) {
+        selected_reflector_id = ObjectID();
+    }
+    selection_dirty = true;
 }
 
 // ---------------------------------------------------------------------------
@@ -65,18 +87,24 @@ void PlanarReflectorClippingCPP::_notification(int p_what) {
                 break;
             }
             if (global_water_clipping_enabled) {
-                const double current_world_y = double(get_global_position().y);
-                if (!observed_world_y_valid || !Math::is_equal_approx(current_world_y, observed_world_y)) {
-                    observed_world_y = current_world_y;
-                    observed_world_y_valid = true;
-                    publish_global_height(true);
-                }
+                selection_dirty = true;
             }
             Camera3D *source = get_source_camera();
             if (source) {
                 sync_reflection_transform(source);
                 request_reflection_render();
+                if (debug_selection_diagnostics) {
+                    UtilityFunctions::print("[PRClip Transform] reflector=", get_name(),
+                            " plane_y=", get_global_position().y,
+                            " selected=", ObjectID(get_instance_id()) == selected_reflector_id,
+                            " reflection_camera_y=", reflection_camera ? reflection_camera->get_global_position().y : 0.0,
+                            " effective_mask=", int64_t(get_effective_reflection_mask()));
+                }
             }
+        } break;
+
+        case NOTIFICATION_VISIBILITY_CHANGED: {
+            selection_dirty = true;
         } break;
 
         case NOTIFICATION_EDITOR_PRE_SAVE: {
@@ -86,6 +114,7 @@ void PlanarReflectorClippingCPP::_notification(int p_what) {
                 editor_texture_binding_suspended = true;
                 bound_reflector_material->set_shader_parameter("reflection_screen_texture", Variant());
                 bound_reflector_material->set_shader_parameter("reflection_texture", Variant());
+                bound_reflector_material->set_shader_parameter("debug_selection_highlight", 0.0);
             }
         } break;
 
@@ -167,16 +196,10 @@ bool PlanarReflectorClippingCPP::ensure_initialized() {
 
     if (global_water_clipping_enabled && ensure_global_parameters()) {
         register_clipping_participant();
-        observed_world_y = double(get_global_position().y);
-        observed_world_y_valid = true;
-        // Scene setup is not a user modification. The first initialized participant
-        // establishes defaults; later setup/re-entry must not steal last-write status.
-        if (!shared_height_initialized) {
-            publish_global_height(true);
-        }
         if (!shared_marker_initialized) {
             publish_global_marker(true);
         }
+        update_active_reflector_selection(source, true);
     }
     configure_reflection_camera();
     sync_all(source);
@@ -274,12 +297,13 @@ void PlanarReflectorClippingCPP::_process(double p_delta) {
     if (!setup_complete || !is_active) {
         return;
     }
-    frame_counter++;
-    if (frame_counter % update_frequency != 0) {
-        return;
-    }
     Camera3D *source = get_source_camera();
     if (!source) {
+        return;
+    }
+    update_active_reflector_selection(source);
+    frame_counter++;
+    if (frame_counter % update_frequency != 0) {
         return;
     }
     Ref<Material> active_material = get_active_material(0);
@@ -326,6 +350,7 @@ void PlanarReflectorClippingCPP::resolve_editor_camera() {
         editor_camera->disconnect("tree_exiting", exit_handler);
     }
     editor_camera = camera;
+    selection_dirty = true;
     if (editor_camera && !editor_camera->is_connected("tree_exiting", exit_handler)) {
         editor_camera->connect("tree_exiting", exit_handler);
     }
@@ -352,6 +377,7 @@ void PlanarReflectorClippingCPP::set_main_camera(Camera3D *p_camera) {
         }
     }
     main_camera = p_camera;
+    selection_dirty = true;
     main_camera_id = p_camera ? ObjectID(p_camera->get_instance_id()) : ObjectID();
     if (main_camera) {
         missing_camera_warned = false;
@@ -648,6 +674,8 @@ void PlanarReflectorClippingCPP::bind_reflection_texture() {
     bound_reflector_material->set_shader_parameter("reflection_screen_texture", texture);
     bound_reflector_material->set_shader_parameter("reflection_texture", texture);
     bound_reflector_material->set_shader_parameter("reflection_flip_x", true);
+    const bool debug_selected = is_selection_debug_enabled() && ObjectID(get_instance_id()) == selected_reflector_id;
+    bound_reflector_material->set_shader_parameter("debug_selection_highlight", debug_selected ? 1.0 : 0.0);
     editor_texture_binding_suspended = false;
 }
 
@@ -671,10 +699,11 @@ void PlanarReflectorClippingCPP::restore_reflection_texture_after_save() {
         bound_reflector_material->set_shader_parameter("reflection_texture", texture);
     }
     editor_texture_binding_suspended = false;
+    update_selection_debug_visuals();
 }
 
 // ---------------------------------------------------------------------------
-// Global shader parameters and shared last-write-wins water clipping
+// Global shader parameters and camera-selected shared water clipping
 // ---------------------------------------------------------------------------
 
 void PlanarReflectorClippingCPP::ensure_global_shader_parameters() {
@@ -748,6 +777,24 @@ void PlanarReflectorClippingCPP::ensure_global_shader_parameters() {
     global_parameters_initialized = true;
 }
 
+void PlanarReflectorClippingCPP::shutdown_shared_manager() {
+    RenderingServer *rs = RenderingServer::get_singleton();
+    if (rs) {
+        rs->global_shader_parameter_set_override(StringName(WATER_HEIGHT_GLOBAL), Variant());
+        rs->global_shader_parameter_set_override(StringName(CAMERA_BIT_GLOBAL), Variant());
+    }
+    clipping_participants.clear();
+    last_height_writer_id = ObjectID();
+    last_marker_writer_id = ObjectID();
+    selected_reflector_id = ObjectID();
+    shared_height_initialized = false;
+    shared_marker_initialized = false;
+    selection_dirty = true;
+    selection_camera_cache_valid = false;
+    selection_camera_id = ObjectID();
+    last_selection_frame = uint64_t(-1);
+}
+
 bool PlanarReflectorClippingCPP::ensure_global_parameters() {
     ensure_global_shader_parameters(); // Idempotent fallback; normally done at module init.
     if (!global_parameters_initialized) {
@@ -772,23 +819,36 @@ bool PlanarReflectorClippingCPP::ensure_global_parameters() {
 }
 
 void PlanarReflectorClippingCPP::register_clipping_participant() {
-    if (!clipping_participants.has(this)) {
-        clipping_participants.push_back(this);
+    const ObjectID id(get_instance_id());
+    if (!clipping_participants.has(id)) {
+        clipping_participants.push_back(id);
     }
+    selection_dirty = true;
 }
 
 void PlanarReflectorClippingCPP::unregister_clipping_participant() {
-    clipping_participants.erase(this);
-    if (last_height_writer == this) {
-        last_height_writer = nullptr;
+    const ObjectID id(get_instance_id());
+    clipping_participants.erase(id);
+    if (last_height_writer_id == id) {
+        last_height_writer_id = ObjectID();
     }
-    if (last_marker_writer == this) {
-        last_marker_writer = nullptr;
+    if (last_marker_writer_id == id) {
+        last_marker_writer_id = ObjectID();
+    }
+    if (selected_reflector_id == id) {
+        selected_reflector_id = ObjectID();
     }
     if (clipping_participants.is_empty()) {
+        RenderingServer *rs = RenderingServer::get_singleton();
+        if (rs) {
+            // Restore the project-wide defaults when this subsystem is no longer active.
+            rs->global_shader_parameter_set_override(StringName(WATER_HEIGHT_GLOBAL), Variant());
+            rs->global_shader_parameter_set_override(StringName(CAMERA_BIT_GLOBAL), Variant());
+        }
         shared_height_initialized = false;
         shared_marker_initialized = false;
     }
+    selection_dirty = true;
     refresh_participant_cameras_and_warnings();
 }
 
@@ -801,13 +861,31 @@ void PlanarReflectorClippingCPP::publish_global_height(bool p_force) {
         return;
     }
     const double height = get_global_position().y;
-    if (p_force || last_height_writer != this || !Math::is_equal_approx(height, shared_water_height)) {
-        rs->global_shader_parameter_set(WATER_HEIGHT_GLOBAL, height);
+    const ObjectID id(get_instance_id());
+    if (p_force || last_height_writer_id != id || !Math::is_equal_approx(height, shared_water_height)) {
+        const StringName height_name(WATER_HEIGHT_GLOBAL);
+        rs->global_shader_parameter_set(height_name, height);
+        // The clipping subsystem owns the effective runtime/editor value while at
+        // least one clipping reflector is active. This bypasses a scene-level
+        // ShaderGlobalsOverride or editor override retaining the project default.
+        rs->global_shader_parameter_set_override(height_name, height);
         shared_water_height = height;
         shared_height_initialized = true;
-        last_height_writer = this;
+        last_height_writer_id = id;
+        if (is_selection_debug_enabled()) {
+            const Variant applied_height = rs->global_shader_parameter_get(WATER_HEIGHT_GLOBAL);
+            UtilityFunctions::print("[PRClip Height] global planar_water_height=", height,
+                    " readback=", applied_height,
+                    " writer=", get_name(), " force=", p_force);
+        }
         for (int i = 0; i < clipping_participants.size(); i++) {
-            clipping_participants[i]->update_configuration_warnings();
+            PlanarReflectorClippingCPP *participant = Object::cast_to<PlanarReflectorClippingCPP>(ObjectDB::get_instance(clipping_participants[i]));
+            if (participant) {
+                participant->update_configuration_warnings();
+                // Every compatible object shader in every reflection viewport reads
+                // this shared value, so a height change invalidates every reflection.
+                participant->request_reflection_render();
+            }
         }
     }
 }
@@ -821,20 +899,227 @@ void PlanarReflectorClippingCPP::publish_global_marker(bool p_force) {
         return;
     }
     const uint32_t marker = get_marker_bit();
-    if (p_force || last_marker_writer != this || marker != shared_marker_bit) {
-        rs->global_shader_parameter_set(CAMERA_BIT_GLOBAL, int64_t(marker));
+    const ObjectID id(get_instance_id());
+    if (p_force || last_marker_writer_id != id || marker != shared_marker_bit) {
+        const StringName marker_name(CAMERA_BIT_GLOBAL);
+        rs->global_shader_parameter_set(marker_name, int64_t(marker));
+        rs->global_shader_parameter_set_override(marker_name, int64_t(marker));
         shared_marker_bit = marker;
         shared_marker_initialized = true;
-        last_marker_writer = this;
+        last_marker_writer_id = id;
         refresh_participant_cameras_and_warnings();
     }
 }
 
 void PlanarReflectorClippingCPP::refresh_participant_cameras_and_warnings() {
-    for (int i = 0; i < clipping_participants.size(); i++) {
-        PlanarReflectorClippingCPP *participant = clipping_participants[i];
+    for (int i = clipping_participants.size() - 1; i >= 0; i--) {
+        PlanarReflectorClippingCPP *participant = Object::cast_to<PlanarReflectorClippingCPP>(ObjectDB::get_instance(clipping_participants[i]));
+        if (!participant || participant->is_queued_for_deletion()) {
+            clipping_participants.remove_at(i);
+            continue;
+        }
         participant->configure_reflection_camera();
         participant->update_configuration_warnings();
+    }
+}
+
+bool PlanarReflectorClippingCPP::is_selection_debug_enabled() {
+    for (int i = 0; i < clipping_participants.size(); i++) {
+        PlanarReflectorClippingCPP *participant = Object::cast_to<PlanarReflectorClippingCPP>(ObjectDB::get_instance(clipping_participants[i]));
+        if (participant && !participant->is_queued_for_deletion() && participant->debug_selection_diagnostics) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void PlanarReflectorClippingCPP::update_selection_debug_visuals() {
+    const bool debug_enabled = is_selection_debug_enabled();
+    for (int i = 0; i < clipping_participants.size(); i++) {
+        PlanarReflectorClippingCPP *participant = Object::cast_to<PlanarReflectorClippingCPP>(ObjectDB::get_instance(clipping_participants[i]));
+        if (!participant || participant->is_queued_for_deletion() || !participant->bound_reflector_material.is_valid()) {
+            continue;
+        }
+        const bool selected = debug_enabled && clipping_participants[i] == selected_reflector_id;
+        participant->bound_reflector_material->set_shader_parameter("debug_selection_highlight", selected ? 1.0 : 0.0);
+    }
+}
+
+bool PlanarReflectorClippingCPP::aabb_intersects_camera_frustum(const AABB &p_world_aabb, Camera3D *p_camera) {
+    if (!p_camera) {
+        return false;
+    }
+    const TypedArray<Plane> frustum = p_camera->get_frustum();
+    for (int plane_index = 0; plane_index < frustum.size(); plane_index++) {
+        const Plane plane = frustum[plane_index];
+        bool every_corner_outside = true;
+        for (int corner_index = 0; corner_index < 8; corner_index++) {
+            if (!plane.is_point_over(p_world_aabb.get_endpoint(corner_index))) {
+                every_corner_outside = false;
+                break;
+            }
+        }
+        if (every_corner_outside) {
+            return false;
+        }
+    }
+    return true;
+}
+
+double PlanarReflectorClippingCPP::distance_squared_to_aabb(const Vector3 &p_point, const AABB &p_aabb) {
+    const Vector3 end = p_aabb.position + p_aabb.size;
+    const Vector3 closest(
+            Math::clamp(p_point.x, p_aabb.position.x, end.x),
+            Math::clamp(p_point.y, p_aabb.position.y, end.y),
+            Math::clamp(p_point.z, p_aabb.position.z, end.z));
+    return double(p_point.distance_squared_to(closest));
+}
+
+void PlanarReflectorClippingCPP::update_active_reflector_selection(Camera3D *p_source_camera, bool p_force) {
+    if (!p_source_camera || p_source_camera->is_queued_for_deletion() || !p_source_camera->is_inside_tree()) {
+        return;
+    }
+
+    const uint64_t frame = Engine::get_singleton()->get_process_frames();
+    if (!p_force && last_selection_frame == frame) {
+        return;
+    }
+    last_selection_frame = frame;
+
+    Vector2i viewport_size;
+    if (p_source_camera->get_viewport()) {
+        viewport_size = Vector2i(p_source_camera->get_viewport()->get_visible_rect().size);
+    }
+    const ObjectID camera_id(p_source_camera->get_instance_id());
+    const Transform3D camera_transform = p_source_camera->get_global_transform();
+    const int camera_projection = int(p_source_camera->get_projection());
+    const double camera_fov = p_source_camera->get_fov();
+    const double camera_size = p_source_camera->get_size();
+    const double camera_near = p_source_camera->get_near();
+    const double camera_far = p_source_camera->get_far();
+    const double camera_h_offset = p_source_camera->get_h_offset();
+    const double camera_v_offset = p_source_camera->get_v_offset();
+    const Vector2 camera_frustum_offset = p_source_camera->get_frustum_offset();
+    const int camera_keep_aspect = int(p_source_camera->get_keep_aspect_mode());
+    const uint32_t camera_cull_mask = p_source_camera->get_cull_mask();
+    const bool camera_changed = !selection_camera_cache_valid
+            || selection_camera_id != camera_id
+            || selection_camera_transform != camera_transform
+            || selection_camera_projection != camera_projection
+            || !Math::is_equal_approx(selection_camera_fov, camera_fov)
+            || !Math::is_equal_approx(selection_camera_size, camera_size)
+            || !Math::is_equal_approx(selection_camera_near, camera_near)
+            || !Math::is_equal_approx(selection_camera_far, camera_far)
+            || !Math::is_equal_approx(selection_camera_h_offset, camera_h_offset)
+            || !Math::is_equal_approx(selection_camera_v_offset, camera_v_offset)
+            || selection_camera_frustum_offset != camera_frustum_offset
+            || selection_camera_keep_aspect != camera_keep_aspect
+            || selection_camera_cull_mask != camera_cull_mask
+            || selection_camera_viewport_size != viewport_size;
+    if (!p_force && !selection_dirty && !camera_changed) {
+        return;
+    }
+
+    selection_camera_cache_valid = true;
+    selection_camera_id = camera_id;
+    selection_camera_transform = camera_transform;
+    selection_camera_projection = camera_projection;
+    selection_camera_fov = camera_fov;
+    selection_camera_size = camera_size;
+    selection_camera_near = camera_near;
+    selection_camera_far = camera_far;
+    selection_camera_h_offset = camera_h_offset;
+    selection_camera_v_offset = camera_v_offset;
+    selection_camera_frustum_offset = camera_frustum_offset;
+    selection_camera_keep_aspect = camera_keep_aspect;
+    selection_camera_cull_mask = camera_cull_mask;
+    selection_camera_viewport_size = viewport_size;
+    selection_dirty = false;
+
+    PlanarReflectorClippingCPP *best = nullptr;
+    PlanarReflectorClippingCPP *current = nullptr;
+    double best_distance_squared = 1.0e300;
+    double current_distance_squared = 1.0e300;
+    int eligible_count = 0;
+    const Vector3 camera_position = p_source_camera->get_global_position();
+    const Ref<World3D> camera_world = p_source_camera->get_world_3d();
+
+    for (int i = clipping_participants.size() - 1; i >= 0; i--) {
+        const ObjectID participant_id = clipping_participants[i];
+        PlanarReflectorClippingCPP *participant = Object::cast_to<PlanarReflectorClippingCPP>(ObjectDB::get_instance(participant_id));
+        if (!participant || participant->is_queued_for_deletion() || !participant->is_inside_tree()) {
+            clipping_participants.remove_at(i);
+            continue;
+        }
+        if (!participant->is_active || !participant->global_water_clipping_enabled || !participant->is_visible_in_tree()) {
+            continue;
+        }
+        if (participant->get_source_camera() != p_source_camera || participant->get_world_3d() != camera_world) {
+            continue;
+        }
+        if ((participant->get_layer_mask() & p_source_camera->get_cull_mask()) == 0) {
+            continue;
+        }
+
+        const AABB world_aabb = participant->get_global_transform().xform(participant->get_aabb());
+        if (!aabb_intersects_camera_frustum(world_aabb, p_source_camera)) {
+            continue;
+        }
+
+        eligible_count++;
+        const double distance_squared = distance_squared_to_aabb(camera_position, world_aabb);
+        if (participant_id == selected_reflector_id) {
+            current = participant;
+            current_distance_squared = distance_squared;
+        }
+        if (!best || distance_squared < best_distance_squared) {
+            best = participant;
+            best_distance_squared = distance_squared;
+        }
+    }
+
+    // Keep the current selection until a competitor is at least 10% closer.
+    // Squared distances use 0.9 * 0.9 = 0.81.
+    PlanarReflectorClippingCPP *selected = best;
+    if (current && best && best != current && best_distance_squared >= current_distance_squared * 0.81) {
+        selected = current;
+    }
+
+    if (!selected) {
+        if (is_selection_debug_enabled()) {
+            UtilityFunctions::print("[PRClip Selection] camera=", p_source_camera->get_name(),
+                    " candidates=0 selected=<none> global_height_retained=", shared_water_height);
+        }
+        selected_reflector_id = ObjectID();
+        refresh_participant_cameras_and_warnings();
+        update_selection_debug_visuals();
+        return;
+    }
+
+    const ObjectID new_selected_id(selected->get_instance_id());
+    const bool selection_changed = new_selected_id != selected_reflector_id;
+    if (is_selection_debug_enabled()) {
+        if (current && best && best != current) {
+            UtilityFunctions::print("[PRClip Selection] camera=", p_source_camera->get_name(),
+                    " candidates=", eligible_count,
+                    " current=", current->get_name(), " current_distance=", Math::sqrt(current_distance_squared),
+                    " challenger=", best->get_name(), " challenger_distance=", Math::sqrt(best_distance_squared),
+                    " result=", selected->get_name(),
+                    selected == current ? " (hysteresis kept current)" : " (challenger selected)");
+        } else {
+            UtilityFunctions::print("[PRClip Selection] camera=", p_source_camera->get_name(),
+                    " candidates=", eligible_count,
+                    " selected=", selected->get_name(),
+                    " distance=", Math::sqrt(best_distance_squared),
+                    " height=", selected->get_global_position().y,
+                    selection_changed ? " (selection changed)" : " (selection retained)");
+        }
+    }
+    selected_reflector_id = new_selected_id;
+    selected->publish_global_height(selection_changed || !shared_height_initialized);
+    if (selection_changed) {
+        refresh_participant_cameras_and_warnings();
+        update_selection_debug_visuals();
     }
 }
 
@@ -856,14 +1141,16 @@ PackedStringArray PlanarReflectorClippingCPP::_get_configuration_warnings() cons
         warnings.push_back("Assign main_camera for runtime reflections.");
     }
     if (global_water_clipping_enabled && !Math::is_equal_approx(double(get_global_position().y), shared_water_height)) {
-        String writer_name = last_height_writer ? String(last_height_writer->get_name()) : String("a previously active reflector");
+        PlanarReflectorClippingCPP *selected = Object::cast_to<PlanarReflectorClippingCPP>(ObjectDB::get_instance(selected_reflector_id));
+        String selected_name = selected ? String(selected->get_name()) : String("the last selected reflector");
         warnings.push_back(String("All clipping reflectors share one global water height. Current height is Y ")
-                + String::num(shared_water_height) + String(", last updated by '") + writer_name
+                + String::num(shared_water_height) + String(", selected from the nearest in-frustum reflector '") + selected_name
                 + String("'. This reflector is at Y ") + String::num(get_global_position().y)
-                + String("; moving it will make its Y the shared height for every clipping reflector."));
+                + String(" and continues rendering with the selected shared clipping height."));
     }
     if (global_water_clipping_enabled && get_marker_bit() != shared_marker_bit) {
-        String writer_name = last_marker_writer ? String(last_marker_writer->get_name()) : String("a previously active reflector");
+        PlanarReflectorClippingCPP *marker_writer = Object::cast_to<PlanarReflectorClippingCPP>(ObjectDB::get_instance(last_marker_writer_id));
+        String writer_name = marker_writer ? String(marker_writer->get_name()) : String("a previously active reflector");
         int current_marker_layer = 1;
         uint32_t marker_bits = shared_marker_bit;
         while (marker_bits > 1) {
@@ -914,20 +1201,27 @@ void PlanarReflectorClippingCPP::set_global_water_clipping_enabled(bool p_value)
         if (is_inside_tree() && setup_complete) {
             register_clipping_participant();
             if (ensure_global_parameters()) {
-                observed_world_y = double(get_global_position().y);
-                observed_world_y_valid = true;
-                publish_global_height(true);
                 publish_global_marker(true);
+                update_active_reflector_selection(get_source_camera(), true);
             }
         }
     } else {
         unregister_clipping_participant();
-        observed_world_y_valid = false;
         configure_reflection_camera();
     }
     update_configuration_warnings();
 }
 bool PlanarReflectorClippingCPP::get_global_water_clipping_enabled() const { return global_water_clipping_enabled; }
+
+void PlanarReflectorClippingCPP::set_debug_selection_diagnostics(bool p_value) {
+    if (debug_selection_diagnostics == p_value) {
+        return;
+    }
+    debug_selection_diagnostics = p_value;
+    selection_dirty = true;
+    update_selection_debug_visuals();
+}
+bool PlanarReflectorClippingCPP::get_debug_selection_diagnostics() const { return debug_selection_diagnostics; }
 
 void PlanarReflectorClippingCPP::set_reflection_camera_marker_layer(int p_layer) {
     reflection_camera_marker_layer = Math::clamp(p_layer, 1, 20);
@@ -1011,6 +1305,9 @@ void PlanarReflectorClippingCPP::_bind_methods() {
     ADD_GROUP("Global Water Clipping", "");
     BIND_PROP(Variant::BOOL, "global_water_clipping_enabled", set_global_water_clipping_enabled, get_global_water_clipping_enabled, PROPERTY_HINT_NONE, "");
     BIND_PROP(Variant::INT, "reflection_camera_marker_layer", set_reflection_camera_marker_layer, get_reflection_camera_marker_layer, PROPERTY_HINT_RANGE, "1,20,1");
+
+    ADD_GROUP("Diagnostics", "");
+    BIND_PROP(Variant::BOOL, "debug_selection_diagnostics", set_debug_selection_diagnostics, get_debug_selection_diagnostics, PROPERTY_HINT_NONE, "");
 
     ADD_GROUP("Camera and Layers", "");
     BIND_PROP(Variant::INT, "reflection_layers", set_reflection_layers, get_reflection_layers, PROPERTY_HINT_LAYERS_3D_RENDER, "");
