@@ -530,8 +530,21 @@ void PlanarReflectorClippingCPP::sync_projection(Camera3D *p_source) {
 
 Vector2i PlanarReflectorClippingCPP::calculate_target_size(Camera3D *p_source) const {
     Vector2i size = fixed_reflection_resolution;
-    if (resolution_mode != 2 && p_source && p_source->get_viewport()) {
-        size = Vector2i(p_source->get_viewport()->get_visible_rect().size);
+    Viewport *source_viewport = (p_source != nullptr) ? p_source->get_viewport() : nullptr;
+    if (resolution_mode == 2) {
+        // The surface shader samples the reflection with SCREEN_UV, so the render
+        // target must keep the source viewport's aspect ratio or the reflection
+        // lands misaligned. Fixed mode therefore pins only the height; the width
+        // follows the viewport shape. The raw x value is used only when no source
+        // viewport is available.
+        if (source_viewport) {
+            const Vector2 viewport_size = source_viewport->get_visible_rect().size;
+            if (viewport_size.y > 0.0f) {
+                size.x = int(Math::round(double(size.y) * double(viewport_size.x) / double(viewport_size.y)));
+            }
+        }
+    } else if (source_viewport) {
+        size = Vector2i(source_viewport->get_visible_rect().size);
         double scale = resolution_mode == 1 ? resolution_scale : 1.0;
         if (use_lod) {
             double distance = get_global_position().distance_to(p_source->get_global_position());
@@ -1416,7 +1429,7 @@ void PlanarReflectorClippingCPP::_bind_methods() {
     BIND_PROP(Variant::FLOAT, "ortho_scale_multiplier", set_ortho_scale_multiplier, get_ortho_scale_multiplier, PROPERTY_HINT_RANGE, "0.1,10.0,0.01");
 
     ADD_GROUP("Resolution and Updates", "");
-    BIND_PROP(Variant::INT, "resolution_mode", set_resolution_mode, get_resolution_mode, PROPERTY_HINT_ENUM, "Match Viewport,Scaled Viewport,Fixed");
+    BIND_PROP(Variant::INT, "resolution_mode", set_resolution_mode, get_resolution_mode, PROPERTY_HINT_ENUM, "Match Viewport,Scaled Viewport,Fixed Height");
     BIND_PROP(Variant::FLOAT, "resolution_scale", set_resolution_scale, get_resolution_scale, PROPERTY_HINT_RANGE, "0.1,1.0,0.05");
     BIND_PROP(Variant::VECTOR2I, "fixed_reflection_resolution", set_fixed_reflection_resolution, get_fixed_reflection_resolution, PROPERTY_HINT_NONE, "");
     BIND_PROP(Variant::INT, "update_frequency", set_update_frequency, get_update_frequency, PROPERTY_HINT_RANGE, "1,10,1");
