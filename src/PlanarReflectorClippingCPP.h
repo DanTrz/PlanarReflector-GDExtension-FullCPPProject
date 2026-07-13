@@ -90,6 +90,12 @@ private:
     bool setup_complete = false;
     Vector2i last_viewport_size;
     Ref<ShaderMaterial> bound_reflector_material;
+    Ref<Material> last_observed_surface_material;
+    bool surface_material_observed = false;
+    bool bound_has_reflection_screen_texture = false;
+    bool bound_has_reflection_texture = false;
+    bool bound_has_reflection_flip_x = false;
+    bool bound_has_debug_selection_highlight = false;
     bool editor_texture_binding_suspended = false;
 
     // Last-applied reflection camera state; properties are written only when the
@@ -122,6 +128,8 @@ private:
     void sync_viewport_size(Camera3D *p_source);
     void sync_reflection_transform(Camera3D *p_source);
     void sync_all(Camera3D *p_source);
+    Ref<Material> get_reflector_surface_material() const;
+    static bool shader_has_uniform(const Ref<ShaderMaterial> &p_material, const StringName &p_name, Variant::Type p_expected_type = Variant::NIL);
     void bind_reflection_texture();
     void clear_reflection_texture();
     void restore_reflection_texture_after_save();

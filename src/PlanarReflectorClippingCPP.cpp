@@ -4,8 +4,10 @@
 #include <godot_cpp/classes/editor_interface.hpp>
 #include <godot_cpp/classes/engine.hpp>
 #include <godot_cpp/classes/material.hpp>
+#include <godot_cpp/classes/mesh.hpp>
 #include <godot_cpp/classes/project_settings.hpp>
 #include <godot_cpp/classes/rendering_server.hpp>
+#include <godot_cpp/classes/shader.hpp>
 #include <godot_cpp/classes/viewport.hpp>
 #include <godot_cpp/classes/viewport_texture.hpp>
 #include <godot_cpp/classes/world3d.hpp>
@@ -112,9 +114,15 @@ void PlanarReflectorClippingCPP::_notification(int p_what) {
                 // ViewportTexture stores a NodePath to the generated SubViewport. It is
                 // valid only for this live editor instance and must never be serialized.
                 editor_texture_binding_suspended = true;
-                bound_reflector_material->set_shader_parameter("reflection_screen_texture", Variant());
-                bound_reflector_material->set_shader_parameter("reflection_texture", Variant());
-                bound_reflector_material->set_shader_parameter("debug_selection_highlight", 0.0);
+                if (bound_has_reflection_screen_texture) {
+                    bound_reflector_material->set_shader_parameter("reflection_screen_texture", Variant());
+                }
+                if (bound_has_reflection_texture) {
+                    bound_reflector_material->set_shader_parameter("reflection_texture", Variant());
+                }
+                if (bound_has_debug_selection_highlight) {
+                    bound_reflector_material->set_shader_parameter("debug_selection_highlight", 0.0);
+                }
             }
         } break;
 
@@ -306,11 +314,14 @@ void PlanarReflectorClippingCPP::_process(double p_delta) {
     if (frame_counter % update_frequency != 0) {
         return;
     }
-    Ref<Material> active_material = get_active_material(0);
-    if (!bound_reflector_material.is_valid() || active_material.ptr() != bound_reflector_material.ptr()) {
+    Ref<Material> active_material = get_reflector_surface_material();
+    if (!surface_material_observed || active_material.ptr() != last_observed_surface_material.ptr()) {
         // MeshInstance3D has no material-changed signal. This O(1) identity check
         // detects an inspector/script material replacement without scanning anything.
+        // Invalid and incompatible materials are also cached, so they do not cause
+        // repeated binding attempts or out-of-range surface access every cadence.
         bind_reflection_texture();
+        update_configuration_warnings();
     }
     sync_projection(source);
     sync_viewport_size(source);
@@ -618,6 +629,14 @@ void PlanarReflectorClippingCPP::setup_environment() {
 }
 
 uint32_t PlanarReflectorClippingCPP::get_marker_bit() const {
+    // BUG/TODO: Layers 1-20 are enabled on normal Godot cameras by default, so this
+    // bit does not uniquely identify the internal reflection camera. The additional
+    // shader check that the camera is below the selected water height masks the issue
+    // for the supported above-water source-camera workflow, but an underwater main or
+    // editor camera can be mistaken for a reflection camera and clipped. Do not move
+    // this to layers 21-32: Godot reserves those for engine/editor internals. Replace
+    // this marker with a reliable camera identity mechanism without modifying the
+    // editor camera's cull mask.
     return uint32_t(1) << uint32_t(Math::clamp(reflection_camera_marker_layer, 1, 20) - 1);
 }
 
@@ -643,13 +662,53 @@ void PlanarReflectorClippingCPP::configure_reflection_camera() {
     }
 }
 
+Ref<Material> PlanarReflectorClippingCPP::get_reflector_surface_material() const {
+    const Ref<Mesh> mesh = get_mesh();
+    if (!mesh.is_valid() || mesh->get_surface_count() <= 0) {
+        return Ref<Material>();
+    }
+    return get_active_material(0);
+}
+
+bool PlanarReflectorClippingCPP::shader_has_uniform(const Ref<ShaderMaterial> &p_material, const StringName &p_name, Variant::Type p_expected_type) {
+    if (!p_material.is_valid() || !p_material->get_shader().is_valid()) {
+        return false;
+    }
+    const Array uniforms = p_material->get_shader()->get_shader_uniform_list(false);
+    for (int i = 0; i < uniforms.size(); i++) {
+        const Dictionary uniform = uniforms[i];
+        if (StringName(uniform.get("name", StringName())) != p_name) {
+            continue;
+        }
+        if (p_expected_type == Variant::NIL) {
+            return true;
+        }
+        if (int(uniform.get("type", int(Variant::NIL))) != int(p_expected_type)) {
+            return false;
+        }
+        // Shader samplers all use Variant::OBJECT in PropertyInfo. Texture2D in the
+        // resource hint distinguishes sampler2D from sampler3D/cube declarations.
+        return p_expected_type != Variant::OBJECT || String(uniform.get("hint_string", String())) == "Texture2D";
+    }
+    return false;
+}
+
 void PlanarReflectorClippingCPP::bind_reflection_texture() {
     if (!reflection_viewport) {
         return;
     }
-    Ref<Material> material = get_active_material(0);
+    Ref<Material> material = get_reflector_surface_material();
+    surface_material_observed = true;
+    last_observed_surface_material = material;
     Ref<ShaderMaterial> shader = material;
     if (!shader.is_valid()) {
+        clear_reflection_texture();
+        return;
+    }
+
+    const bool has_screen_texture = shader_has_uniform(shader, StringName("reflection_screen_texture"), Variant::OBJECT);
+    const bool has_reflection_texture = shader_has_uniform(shader, StringName("reflection_texture"), Variant::OBJECT);
+    if (!has_screen_texture && !has_reflection_texture) {
         clear_reflection_texture();
         return;
     }
@@ -668,23 +727,44 @@ void PlanarReflectorClippingCPP::bind_reflection_texture() {
         private_shader->set_local_to_scene(true);
         set_surface_override_material(0, private_shader);
         bound_reflector_material = private_shader;
+        last_observed_surface_material = private_shader;
     }
 
+    bound_has_reflection_screen_texture = has_screen_texture;
+    bound_has_reflection_texture = has_reflection_texture;
+    bound_has_reflection_flip_x = shader_has_uniform(bound_reflector_material, StringName("reflection_flip_x"));
+    bound_has_debug_selection_highlight = shader_has_uniform(bound_reflector_material, StringName("debug_selection_highlight"));
     Ref<ViewportTexture> texture = reflection_viewport->get_texture();
-    bound_reflector_material->set_shader_parameter("reflection_screen_texture", texture);
-    bound_reflector_material->set_shader_parameter("reflection_texture", texture);
-    bound_reflector_material->set_shader_parameter("reflection_flip_x", true);
+    if (bound_has_reflection_screen_texture) {
+        bound_reflector_material->set_shader_parameter("reflection_screen_texture", texture);
+    }
+    if (bound_has_reflection_texture) {
+        bound_reflector_material->set_shader_parameter("reflection_texture", texture);
+    }
+    if (bound_has_reflection_flip_x) {
+        bound_reflector_material->set_shader_parameter("reflection_flip_x", true);
+    }
     const bool debug_selected = is_selection_debug_enabled() && ObjectID(get_instance_id()) == selected_reflector_id;
-    bound_reflector_material->set_shader_parameter("debug_selection_highlight", debug_selected ? 1.0 : 0.0);
+    if (bound_has_debug_selection_highlight) {
+        bound_reflector_material->set_shader_parameter("debug_selection_highlight", debug_selected ? 1.0 : 0.0);
+    }
     editor_texture_binding_suspended = false;
 }
 
 void PlanarReflectorClippingCPP::clear_reflection_texture() {
     if (bound_reflector_material.is_valid()) {
-        bound_reflector_material->set_shader_parameter("reflection_screen_texture", Variant());
-        bound_reflector_material->set_shader_parameter("reflection_texture", Variant());
+        if (bound_has_reflection_screen_texture) {
+            bound_reflector_material->set_shader_parameter("reflection_screen_texture", Variant());
+        }
+        if (bound_has_reflection_texture) {
+            bound_reflector_material->set_shader_parameter("reflection_texture", Variant());
+        }
     }
     bound_reflector_material.unref();
+    bound_has_reflection_screen_texture = false;
+    bound_has_reflection_texture = false;
+    bound_has_reflection_flip_x = false;
+    bound_has_debug_selection_highlight = false;
     editor_texture_binding_suspended = false;
 }
 
@@ -695,8 +775,12 @@ void PlanarReflectorClippingCPP::restore_reflection_texture_after_save() {
     }
     Ref<ViewportTexture> texture = reflection_viewport->get_texture();
     if (bound_reflector_material.is_valid()) {
-        bound_reflector_material->set_shader_parameter("reflection_screen_texture", texture);
-        bound_reflector_material->set_shader_parameter("reflection_texture", texture);
+        if (bound_has_reflection_screen_texture) {
+            bound_reflector_material->set_shader_parameter("reflection_screen_texture", texture);
+        }
+        if (bound_has_reflection_texture) {
+            bound_reflector_material->set_shader_parameter("reflection_texture", texture);
+        }
     }
     editor_texture_binding_suspended = false;
     update_selection_debug_visuals();
@@ -864,10 +948,9 @@ void PlanarReflectorClippingCPP::publish_global_height(bool p_force) {
     const ObjectID id(get_instance_id());
     if (p_force || last_height_writer_id != id || !Math::is_equal_approx(height, shared_water_height)) {
         const StringName height_name(WATER_HEIGHT_GLOBAL);
-        rs->global_shader_parameter_set(height_name, height);
-        // The clipping subsystem owns the effective runtime/editor value while at
-        // least one clipping reflector is active. This bypasses a scene-level
-        // ShaderGlobalsOverride or editor override retaining the project default.
+        // Override only the effective value. Do not replace the base project value:
+        // clearing this override when the final participant exits must reveal the
+        // configured Project Settings default rather than a stale reflector height.
         rs->global_shader_parameter_set_override(height_name, height);
         shared_water_height = height;
         shared_height_initialized = true;
@@ -902,7 +985,8 @@ void PlanarReflectorClippingCPP::publish_global_marker(bool p_force) {
     const ObjectID id(get_instance_id());
     if (p_force || last_marker_writer_id != id || marker != shared_marker_bit) {
         const StringName marker_name(CAMERA_BIT_GLOBAL);
-        rs->global_shader_parameter_set(marker_name, int64_t(marker));
+        // As with height, keep the project value intact so teardown can restore it
+        // simply by clearing this temporary override.
         rs->global_shader_parameter_set_override(marker_name, int64_t(marker));
         shared_marker_bit = marker;
         shared_marker_initialized = true;
@@ -941,7 +1025,9 @@ void PlanarReflectorClippingCPP::update_selection_debug_visuals() {
             continue;
         }
         const bool selected = debug_enabled && clipping_participants[i] == selected_reflector_id;
-        participant->bound_reflector_material->set_shader_parameter("debug_selection_highlight", selected ? 1.0 : 0.0);
+        if (participant->bound_has_debug_selection_highlight) {
+            participant->bound_reflector_material->set_shader_parameter("debug_selection_highlight", selected ? 1.0 : 0.0);
+        }
     }
 }
 
@@ -1132,10 +1218,20 @@ PackedStringArray PlanarReflectorClippingCPP::_get_configuration_warnings() cons
     if (!get_mesh().is_valid()) {
         warnings.push_back("Assign a reflector mesh (normally PlaneMesh).");
     }
-    Ref<Material> material = get_active_material(0);
+    const Ref<Mesh> mesh = get_mesh();
+    Ref<Material> material;
+    if (mesh.is_valid() && mesh->get_surface_count() <= 0) {
+        warnings.push_back("The reflector mesh must contain at least one surface.");
+    } else if (mesh.is_valid()) {
+        material = get_reflector_surface_material();
+    }
     Ref<ShaderMaterial> shader = material;
-    if (!shader.is_valid()) {
-        warnings.push_back("The reflector requires a ShaderMaterial that accepts reflection_texture or reflection_screen_texture.");
+    if (mesh.is_valid() && mesh->get_surface_count() > 0 && !shader.is_valid()) {
+        warnings.push_back("Surface 0 of the reflector mesh requires a ShaderMaterial.");
+    } else if (shader.is_valid()
+            && !shader_has_uniform(shader, StringName("reflection_screen_texture"), Variant::OBJECT)
+            && !shader_has_uniform(shader, StringName("reflection_texture"), Variant::OBJECT)) {
+        warnings.push_back("The reflector ShaderMaterial must declare a sampler2D uniform named 'reflection_screen_texture' or 'reflection_texture' so its reflection ViewportTexture can be assigned.");
     }
     if (!Engine::get_singleton()->is_editor_hint() && !main_camera) {
         warnings.push_back("Assign main_camera for runtime reflections.");
@@ -1277,7 +1373,12 @@ int PlanarReflectorClippingCPP::get_offset_blend_mode() const { return offset_bl
 
 void PlanarReflectorClippingCPP::set_use_lod(bool p_value) { use_lod = p_value; last_viewport_size = Vector2i(); }
 bool PlanarReflectorClippingCPP::get_use_lod() const { return use_lod; }
-void PlanarReflectorClippingCPP::set_lod_distance_near(double p_value) { lod_distance_near = Math::max(p_value, 0.0); }
+void PlanarReflectorClippingCPP::set_lod_distance_near(double p_value) {
+    lod_distance_near = Math::max(p_value, 0.0);
+    if (lod_distance_far <= lod_distance_near) {
+        lod_distance_far = lod_distance_near + 0.001;
+    }
+}
 double PlanarReflectorClippingCPP::get_lod_distance_near() const { return lod_distance_near; }
 void PlanarReflectorClippingCPP::set_lod_distance_far(double p_value) { lod_distance_far = Math::max(p_value, lod_distance_near + 0.001); }
 double PlanarReflectorClippingCPP::get_lod_distance_far() const { return lod_distance_far; }
