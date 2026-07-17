@@ -10,8 +10,8 @@
             "type": "cppvsdbg",
             "request": "launch",
             "preLaunchTask": "buildCPP",
-            "program": "C:\\Local Documents\\Development\\Godot\\Godot Versions\\Godot_v4.4.1-stable_mono_win64\\Godot_v4.4.1-stable_mono_win64.exe",
-            "args": ["--path", "C:\\Local Documents\\Development\\Godot\\Godot Projects\\PlanarReflector-GDExtension\\PlanarReflector-CPP"],
+            "program": "C:/Local Documents/Development/Godot/Godot Versions/Godot_v4.71-stable-mono/Godot_v4.7.1-stable_mono_win64.exe",
+            "args": ["--path", "C:/Local Documents/Development/Godot/Godot Versions/Godot_v4.71-stable-mono/Godot_v4.7.1-stable_mono_win64.exe"],
             "cwd": "${workspaceFolder}",
             "console": "integratedTerminal",
             "stopAtEntry": false
